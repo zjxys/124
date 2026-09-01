@@ -63,13 +63,12 @@
 
         #loading {
             position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
+            bottom: 70px;
+            left: 20px;
             color: white;
-            font-size: 24px;
+            font-size: 14px;
             z-index: 20;
-            text-align: center;
+            text-align: left;
         }
         
         /* 摄像头预览小窗 */
@@ -128,31 +127,81 @@
             left: -9999px;
         }
 
-        /* 星系形成文字覆盖层 */
+        /* 星系形成文字覆盖层（顶部） */
         #formation-overlay {
             position: absolute;
-            top: 50%;
+            top: 50px;
             left: 50%;
-            transform: translate(-50%, -50%);
+            transform: translateX(-50%);
             z-index: 15;
             text-align: center;
             pointer-events: none;
             opacity: 0;
-            transition: opacity 0.6s ease;
+            transition: opacity 0.6s ease, top 0.6s ease;
+        }
+
+        #formation-overlay.show {
+            opacity: 1;
+            top: 40px;
         }
 
         #formation-overlay .formation-title {
-            font-size: 2.2rem;
+            font-size: 1.8rem;
             color: #ffcc44;
             text-shadow: 0 0 25px rgba(255, 200, 50, 0.9), 0 0 60px rgba(255, 150, 30, 0.4);
             letter-spacing: 4px;
         }
 
         #formation-overlay .formation-sub {
-            font-size: 1rem;
+            font-size: 0.95rem;
             color: rgba(255, 255, 255, 0.6);
-            margin-top: 10px;
+            margin-top: 8px;
             letter-spacing: 1px;
+        }
+
+        #formation-overlay .formation-stage {
+            font-size: 0.75rem;
+            color: rgba(255, 200, 100, 0.4);
+            margin-top: 6px;
+            letter-spacing: 2px;
+        }
+
+        /* 快进按钮 */
+        #fastforward-btn {
+            position: absolute;
+            top: 100px;
+            right: 30px;
+            z-index: 16;
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid rgba(255, 200, 100, 0.5);
+            border-radius: 20px;
+            padding: 8px 18px;
+            color: #ffcc66;
+            font-size: 13px;
+            cursor: pointer;
+            opacity: 0;
+            pointer-events: none;
+            transition: all 0.3s ease;
+            font-family: inherit;
+            letter-spacing: 1px;
+        }
+
+        #fastforward-btn.show {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        #fastforward-btn:hover {
+            background: rgba(255, 170, 50, 0.2);
+            box-shadow: 0 0 15px rgba(255, 170, 50, 0.4);
+            border-color: #ffaa33;
+        }
+
+        #fastforward-btn.active {
+            background: rgba(255, 170, 50, 0.3);
+            border-color: #ffaa33;
+            color: #fff;
+            box-shadow: 0 0 20px rgba(255, 170, 50, 0.6);
         }
 
         /* 点击提示 */
@@ -287,14 +336,18 @@
         <div id="gesture-status" class="status">等待手势...</div>
     </div>
 
-    <!-- 星系形成文字覆盖层 -->
+    <!-- 星系形成文字覆盖层（顶部） -->
     <div id="formation-overlay">
         <div class="formation-title"></div>
         <div class="formation-sub"></div>
+        <div class="formation-stage"></div>
     </div>
 
+    <!-- 快进按钮 -->
+    <button id="fastforward-btn">⏩ 快进 2x</button>
+
     <!-- 点击提示 -->
-    <div id="click-hint">点击黑洞3次: 观看星系形成过程 &nbsp;|&nbsp; 长按: 查看简介</div>
+    <div id="click-hint">点击黑洞3次: 星系形成过程 &nbsp;|&nbsp; 长按: 查看简介 &nbsp;|&nbsp; 快进按钮在右上角</div>
 
     <!-- 简介面板 -->
     <div id="info-panel">
@@ -393,6 +446,8 @@
         // 星系形成状态
         let formationActive = false;
         let formationStartTime = 0;
+        let formationElapsed = 0;
+        let formationSpeed = 1.0;
         let formationCloud = null;
         let formationCloudData = null;
         let flashSphere = null;
@@ -402,6 +457,7 @@
         let raycaster, mouse;
         let clickTarget;
         let formationOrigOpacities = {};
+        let lastFrameTime = 0;
 
         // 相机控制状态
         const cameraState = {
@@ -876,9 +932,14 @@
         function animate() {
             requestAnimationFrame(animate);
 
+            const now = performance.now();
+            const dt = lastFrameTime ? (now - lastFrameTime) / 1000 : 0.016;
+            lastFrameTime = now;
+
             time += 0.002;
 
             if (formationActive) {
+                formationElapsed += dt * formationSpeed;
                 updateFormation();
             } else {
                 // 吸积盘旋转
@@ -1018,15 +1079,16 @@
             }
         });
 
-        function showFormationText(title, sub) {
+        function showFormationText(title, sub, stage) {
             const overlay = document.getElementById('formation-overlay');
             overlay.querySelector('.formation-title').textContent = title;
             overlay.querySelector('.formation-sub').textContent = sub || '';
-            overlay.style.opacity = '1';
+            overlay.querySelector('.formation-stage').textContent = stage || '';
+            overlay.classList.add('show');
         }
 
         function hideFormationText() {
-            document.getElementById('formation-overlay').style.opacity = '0';
+            document.getElementById('formation-overlay').classList.remove('show');
         }
 
         function hideClickHint() {
@@ -1079,7 +1141,8 @@
 
         function startFormation() {
             formationActive = true;
-            formationStartTime = performance.now();
+            formationElapsed = 0;
+            formationSpeed = 1.0;
             bloomStrengthBoost = 0;
 
             // 存储原始透明度
@@ -1100,16 +1163,48 @@
             scene.add(formationCloud);
 
             hideClickHint();
-            showFormationText("星系重置", "原有结构消散中...");
+            showFastForwardBtn();
+            showFormationText("星系重置", "原有结构逐渐消散...", "阶段 1/9");
+        }
+
+        function toggleFastForward() {
+            const btn = document.getElementById('fastforward-btn');
+            if (formationSpeed === 1.0) {
+                formationSpeed = 2.5;
+                btn.classList.add('active');
+                btn.innerHTML = "⏩ 快进 2.5x";
+            } else if (formationSpeed === 2.5) {
+                formationSpeed = 4.0;
+                btn.classList.add('active');
+                btn.innerHTML = "⏩ 快进 4x";
+            } else {
+                formationSpeed = 1.0;
+                btn.classList.remove('active');
+                btn.innerHTML = "⏩ 快进 2x";
+            }
+        }
+
+        function showFastForwardBtn() {
+            const btn = document.getElementById('fastforward-btn');
+            btn.classList.add('show');
+            btn.onclick = toggleFastForward;
+        }
+
+        function hideFastForwardBtn() {
+            const btn = document.getElementById('fastforward-btn');
+            btn.classList.remove('show');
+            btn.classList.remove('active');
+            formationSpeed = 1.0;
+            btn.innerHTML = "⏩ 快进 2x";
         }
 
         function updateFormation() {
-            const elapsed = (performance.now() - formationStartTime) / 1000;
+            const elapsed = formationElapsed;
             const FO = formationOrigOpacities;
 
-            // --- 阶段1: 溶解 (0-4s) ---
-            if (elapsed < 4) {
-                const t = elapsed / 4;
+            // --- 阶段1: 星系消散 (0-6s) ---
+            if (elapsed < 6) {
+                const t = elapsed / 6;
                 orbitalTrails.forEach((trail, i) => {
                     trail.mesh.material.opacity = FO.trails[i] * (1 - t);
                     trail.orbitLine.material.opacity = FO.orbitLines[i] * (1 - t);
@@ -1120,12 +1215,14 @@
                 photonRing.material.opacity = FO.photon * (1 - t);
                 blackHole.scale.setScalar(1);
 
-                if (t < 0.03) showFormationText("星系重置", "原有结构逐渐消散...");
+                if (t < 0.02) showFormationText("星系消散", "轨道带逐渐瓦解...", "阶段 1/9");
+                if (t > 0.35 && t < 0.38) showFormationText("星系消散", "吸积盘光芒褪去...", "阶段 1/9");
+                if (t > 0.7 && t < 0.73) showFormationText("星系消散", "星空背景逐渐暗淡...", "阶段 1/9");
             }
 
-            // --- 阶段2a: 星云显现 (4-7s) ---
-            else if (elapsed < 7) {
-                const t = (elapsed - 4) / 3;
+            // --- 阶段2: 原始星云 (6-11s) ---
+            else if (elapsed < 11) {
+                const t = (elapsed - 6) / 5;
 
                 orbitalTrails.forEach((trail) => {
                     trail.mesh.material.opacity = 0;
@@ -1135,28 +1232,29 @@
                 lensingRing.material.opacity = 0;
                 starfield.material.opacity = 0;
                 photonRing.material.opacity = 0;
-                blackHole.scale.setScalar(Math.max(0, 1 - t));
+                blackHole.scale.setScalar(Math.max(0, 1 - t * 0.8));
 
-                // 粒子云缓慢浮现
                 formationCloud.material.opacity = t;
 
                 const cloudPos = formationCloudData.positions;
                 const cloudParams = formationCloudData.params;
                 for (let i = 0; i < cloudParams.length; i++) {
                     const p = cloudParams[i];
-                    p.currentAngle += p.swirlSpeed * 0.3;
+                    p.currentAngle += p.swirlSpeed * 0.2;
                     cloudPos[i * 3] = p.startR * Math.cos(p.currentAngle);
                     cloudPos[i * 3 + 1] = p.startY;
                     cloudPos[i * 3 + 2] = p.startR * Math.sin(p.currentAngle);
                 }
                 formationCloud.geometry.attributes.position.needsUpdate = true;
 
-                if (t < 0.03) showFormationText("星云显现", "原始物质从虚空中凝聚...");
+                if (t < 0.02) showFormationText("原始星云", "物质从虚空中缓缓凝聚...", "阶段 2/9");
+                if (t > 0.45 && t < 0.48) showFormationText("原始星云", "氢氦尘埃弥漫整个空间...", "阶段 2/9");
+                if (t > 0.8 && t < 0.83) showFormationText("原始星云", "微小的密度涨落正在孕育...", "阶段 2/9");
             }
 
-            // --- 阶段2b: 星云坍缩 (7-14s) ---
-            else if (elapsed < 14) {
-                const t = (elapsed - 7) / 7;
+            // --- 阶段3: 引力坍缩 (11-21s) ---
+            else if (elapsed < 21) {
+                const t = (elapsed - 11) / 10;
 
                 blackHole.scale.setScalar(0);
                 formationCloud.material.opacity = 1;
@@ -1169,8 +1267,8 @@
                     const easedT = localT * localT * (3 - 2 * localT);
 
                     const r = p.startR * (1 - easedT) + p.targetR * easedT;
-                    p.currentAngle += p.swirlSpeed * (1 + easedT * 4);
-                    const yFlat = p.startY * (1 - easedT) * (1 - easedT);
+                    p.currentAngle += p.swirlSpeed * (1 + easedT * 3);
+                    const yFlat = p.startY * (1 - easedT) * (1 - easedT * 0.5);
 
                     cloudPos[i * 3] = r * Math.cos(p.currentAngle);
                     cloudPos[i * 3 + 1] = yFlat;
@@ -1178,14 +1276,16 @@
                 }
                 formationCloud.geometry.attributes.position.needsUpdate = true;
 
-                if (t < 0.02) showFormationText("星云坍缩", "物质向中心螺旋汇聚...");
-                if (t > 0.35 && t < 0.38) showFormationText("坍缩加速", "引力捕获范围扩大...");
-                if (t > 0.7 && t < 0.73) showFormationText("接近临界", "核心密度急剧增加...");
+                if (t < 0.02) showFormationText("引力坍缩", "密度峰开始吸引周围物质...", "阶段 3/9");
+                if (t > 0.2 && t < 0.23) showFormationText("引力坍缩", "引力势阱逐渐加深...", "阶段 3/9");
+                if (t > 0.4 && t < 0.43) showFormationText("坍缩加速", "自由下落阶段开始...", "阶段 3/9");
+                if (t > 0.6 && t < 0.63) showFormationText("坍缩加速", "角动量使物质旋转加快...", "阶段 3/9");
+                if (t > 0.8 && t < 0.83) showFormationText("接近临界", "核心密度急剧攀升...", "阶段 3/9");
             }
 
-            // --- 阶段2c: 盘面形成 (14-17s) ---
-            else if (elapsed < 17) {
-                const t = (elapsed - 14) / 3;
+            // --- 阶段4: 盘面形成 (21-26s) ---
+            else if (elapsed < 26) {
+                const t = (elapsed - 21) / 5;
 
                 blackHole.scale.setScalar(0);
                 formationCloud.material.opacity = 1;
@@ -1194,170 +1294,145 @@
                 const cloudParams = formationCloudData.params;
                 for (let i = 0; i < cloudParams.length; i++) {
                     const p = cloudParams[i];
-                    p.currentAngle += p.swirlSpeed * 5;
-                    const yDamp = p.startY * 0.08 * (1 - t);
+                    p.currentAngle += p.swirlSpeed * 4;
+                    const yDamp = p.startY * 0.1 * (1 - t) * (1 - t);
                     cloudPos[i * 3] = p.targetR * Math.cos(p.currentAngle);
                     cloudPos[i * 3 + 1] = yDamp;
                     cloudPos[i * 3 + 2] = p.targetR * Math.sin(p.currentAngle);
                 }
                 formationCloud.geometry.attributes.position.needsUpdate = true;
 
-                if (t < 0.03) showFormationText("盘面形成", "物质压扁为旋转盘面...");
+                if (t < 0.02) showFormationText("盘面形成", "垂直方向物质向中面坠落...", "阶段 4/9");
+                if (t > 0.35 && t < 0.38) showFormationText("盘面形成", "旋转盘逐渐扁平化...", "阶段 4/9");
+                if (t > 0.7 && t < 0.73) showFormationText("盘面形成", "开普勒旋转建立...", "阶段 4/9");
             }
 
-            // --- 阶段3a: 核心点燃 (17-20s) ---
-            else if (elapsed < 20) {
-                const t = (elapsed - 17) / 3;
+            // --- 阶段5: 核心点燃 (26-31s) ---
+            else if (elapsed < 31) {
+                const t = (elapsed - 26) / 5;
 
-                // 核心亮点出现
                 if (!flashSphere) {
                     flashSphere = new THREE.Mesh(
-                        new THREE.SphereGeometry(CONFIG.blackHoleRadius * 0.3, 32, 32),
+                        new THREE.SphereGeometry(CONFIG.blackHoleRadius * 0.2, 32, 32),
                         new THREE.MeshBasicMaterial({
-                            color: 0xffffee, transparent: true, opacity: 0.3,
+                            color: 0xffffee, transparent: true, opacity: 0.2,
                             blending: THREE.AdditiveBlending
                         })
                     );
                     scene.add(flashSphere);
                 }
-                flashSphere.scale.setScalar(0.3 + t * 2);
-                flashSphere.material.opacity = 0.3 + t * 0.4;
+                flashSphere.scale.setScalar(0.2 + t * 1.5);
+                flashSphere.material.opacity = 0.2 + t * 0.4;
 
-                bloomStrengthBoost = t * 0.5;
+                bloomStrengthBoost = t * 0.4;
 
-                // 云继续向核心靠拢
                 const cloudPos = formationCloudData.positions;
                 const cloudParams = formationCloudData.params;
                 for (let i = 0; i < cloudParams.length; i++) {
                     const p = cloudParams[i];
-                    const r = p.targetR * (1 - t * 0.3);
-                    p.currentAngle += p.swirlSpeed * 6;
+                    const r = p.targetR * (1 - t * 0.2);
+                    p.currentAngle += p.swirlSpeed * 5;
                     cloudPos[i * 3] = r * Math.cos(p.currentAngle);
                     cloudPos[i * 3 + 1] = 0;
                     cloudPos[i * 3 + 2] = r * Math.sin(p.currentAngle);
                 }
                 formationCloud.geometry.attributes.position.needsUpdate = true;
-                formationCloud.material.opacity = 1 - t * 0.2;
+                formationCloud.material.opacity = 1 - t * 0.15;
+                blackHole.scale.setScalar(0);
 
-                if (t < 0.03) showFormationText("核心点燃", "引力坍缩达到临界点...");
+                if (t < 0.02) showFormationText("核心点燃", "中心温度突破临界点...", "阶段 5/9");
+                if (t > 0.35 && t < 0.38) showFormationText("核心点燃", "辐射压力与引力对抗...", "阶段 5/9");
+                if (t > 0.7 && t < 0.73) showFormationText("核心点燃", "核心区域越来越亮...", "阶段 5/9");
             }
 
-            // --- 阶段3b: 黑洞诞生 / 大闪光 (20-23s) ---
-            else if (elapsed < 23) {
-                const t = (elapsed - 20) / 3;
+            // --- 阶段6: 黑洞诞生 (31-37s) ---
+            else if (elapsed < 37) {
+                const t = (elapsed - 31) / 6;
 
-                // 大闪光爆发
                 if (flashSphere) {
-                    const flashScale = 1 + t * 25;
+                    const flashScale = 0.5 + t * 28;
                     flashSphere.scale.set(flashScale, flashScale, flashScale);
-                    flashSphere.material.opacity = Math.max(0, (1 - t) * 1.0);
+                    flashSphere.material.opacity = Math.max(0, (1 - t * 0.9) * 1.0);
                 }
 
-                bloomStrengthBoost = Math.max(0, 1 - t * 1.2);
+                bloomStrengthBoost = Math.max(0, 1 - t * 1.1);
 
-                // 黑洞从0增长到完整大小
-                blackHole.scale.setScalar(Math.min(1, t * 1.5));
+                blackHole.scale.setScalar(Math.min(1, t * 1.2));
+                photonRing.material.opacity = FO.photon * Math.min(1, t * 1.8);
 
-                photonRing.material.opacity = FO.photon * Math.min(1, t * 2);
-
-                // 粒子云被快速吸收
                 const cloudPos = formationCloudData.positions;
                 const cloudParams = formationCloudData.params;
                 for (let i = 0; i < cloudParams.length; i++) {
                     const p = cloudParams[i];
-                    const r = p.targetR * Math.max(0, 1 - t * 1.5);
-                    p.currentAngle += p.swirlSpeed * 8;
+                    const r = p.targetR * Math.max(0, 1 - t * 1.3);
+                    p.currentAngle += p.swirlSpeed * 7;
                     cloudPos[i * 3] = r * Math.cos(p.currentAngle);
                     cloudPos[i * 3 + 1] = 0;
                     cloudPos[i * 3 + 2] = r * Math.sin(p.currentAngle);
                 }
                 formationCloud.geometry.attributes.position.needsUpdate = true;
-                formationCloud.material.opacity = Math.max(0, 1 - t * 1.8);
+                formationCloud.material.opacity = Math.max(0, 1 - t * 1.5);
 
-                if (t < 0.03) showFormationText("黑洞诞生", "事件视界形成，时空扭曲");
+                if (t < 0.02) showFormationText("黑洞诞生", "事件视界正在形成...", "阶段 6/9");
+                if (t > 0.25 && t < 0.28) showFormationText("黑洞诞生", "时空剧烈扭曲...", "阶段 6/9");
+                if (t > 0.5 && t < 0.53) showFormationText("黑洞诞生", "大闪光爆发...", "阶段 6/9");
+                if (t > 0.75 && t < 0.78) showFormationText("黑洞诞生", "残余物质被吞噬...", "阶段 6/9");
             }
 
-            // --- 阶段3c: 残余物质吸收 (23-25s) ---
-            else if (elapsed < 25) {
-                const t = (elapsed - 23) / 2;
+            // --- 阶段7: 吸积盘形成 (37-47s) ---
+            else if (elapsed < 47) {
+                const t = (elapsed - 37) / 10;
+                const easedT = t * t * (3 - 2 * t);
 
                 if (flashSphere) {
-                    flashSphere.material.opacity = Math.max(0, (1 - t) * 0.3);
-                    flashSphere.scale.setScalar(1 + (1 - t) * 25);
+                    flashSphere.material.opacity = Math.max(0, (1 - t * 0.5) * 0.3);
+                    flashSphere.scale.setScalar(0.5 + (1 - t * 0.5) * 28);
                 }
-                bloomStrengthBoost = Math.max(0, (1 - t) * 0.3);
-
-                if (t > 0.4 && formationCloud) {
+                if (t > 0.3 && formationCloud) {
                     scene.remove(formationCloud);
                     formationCloud = null;
                 }
 
+                bloomStrengthBoost = Math.max(0, (1 - t * 1.2) * 0.4);
+
                 blackHole.scale.setScalar(1);
                 photonRing.material.opacity = FO.photon;
+                accretionDisk.material.opacity = FO.disk * easedT;
+                lensingRing.material.opacity = FO.lens * easedT * 0.4;
+
+                accretionDisk.rotation.y += 0.004;
+                lensingRing.rotation.z += 0.002;
+
                 const pulse = 1 + Math.sin(time * 2) * 0.02;
                 photonRing.scale.set(pulse, pulse, pulse);
 
-                if (t < 0.03) showFormationText("吞噬残余", "残余物质被事件视界吞噬...");
+                if (t < 0.02) showFormationText("吸积盘形成", "外围气体开始落入...", "阶段 7/9");
+                if (t > 0.2 && t < 0.23) showFormationText("吸积盘形成", "摩擦加热盘体...", "阶段 7/9");
+                if (t > 0.4 && t < 0.43) showFormationText("吸积盘形成", "温度升至数千度...", "阶段 7/9");
+                if (t > 0.6 && t < 0.63) showFormationText("吸积盘形成", "内缘发出炽热光芒...", "阶段 7/9");
+                if (t > 0.8 && t < 0.83) showFormationText("引力透镜", "光线开始沿弯曲路径传播...", "阶段 7/9");
             }
 
-            // --- 阶段4a: 吸积盘形成 (25-29s) ---
-            else if (elapsed < 29) {
-                const t = (elapsed - 25) / 4;
-                const easedT = t * t * (3 - 2 * t);
+            // --- 阶段8: 轨道带演化 (47-62s) ---
+            else if (elapsed < 62) {
+                const t = (elapsed - 47) / 15;
 
                 if (flashSphere) { scene.remove(flashSphere); flashSphere = null; }
                 if (formationCloud) { scene.remove(formationCloud); formationCloud = null; }
                 bloomStrengthBoost = 0;
 
-                accretionDisk.material.opacity = FO.disk * easedT;
-                lensingRing.material.opacity = FO.lens * easedT * 0.5;
-                photonRing.material.opacity = FO.photon;
-                blackHole.scale.setScalar(1);
-
-                accretionDisk.rotation.y += 0.003;
-                lensingRing.rotation.z += 0.0015;
-
-                const pulse = 1 + Math.sin(time * 2) * 0.02;
-                photonRing.scale.set(pulse, pulse, pulse);
-
-                if (t < 0.03) showFormationText("吸积盘形成", "炽热气体螺旋落入...");
-                if (t > 0.6 && t < 0.63) showFormationText("温度升高", "摩擦使盘体发出炽热光芒...");
-            }
-
-            // --- 阶段4b: 引力透镜显现 (29-32s) ---
-            else if (elapsed < 32) {
-                const t = (elapsed - 29) / 3;
-                const easedT = t * t * (3 - 2 * t);
-
-                accretionDisk.material.opacity = FO.disk;
-                lensingRing.material.opacity = FO.lens * easedT;
-                photonRing.material.opacity = FO.photon * easedT;
-                blackHole.scale.setScalar(1);
-
-                accretionDisk.rotation.y += 0.002;
-                lensingRing.rotation.z += 0.001;
-
-                const pulse = 1 + Math.sin(time * 2) * 0.02;
-                photonRing.scale.set(pulse, pulse, pulse);
-
-                if (t < 0.03) showFormationText("引力透镜", "光线沿弯曲时空传播...");
-            }
-
-            // --- 阶段5: 椭圆轨道带形成 (32-40s) ---
-            else if (elapsed < 40) {
-                const t = (elapsed - 32) / 8;
-
                 accretionDisk.material.opacity = FO.disk;
                 lensingRing.material.opacity = FO.lens;
                 photonRing.material.opacity = FO.photon;
-                accretionDisk.rotation.y += 0.001;
-                lensingRing.rotation.z += 0.0005;
+                blackHole.scale.setScalar(1);
+                accretionDisk.rotation.y += 0.0015;
+                lensingRing.rotation.z += 0.0008;
+
                 const pulse = 1 + Math.sin(time * 2) * 0.02;
                 photonRing.scale.set(pulse, pulse, pulse);
 
-                // 每条轨道带依次出现（间隔更大，节奏更慢）
-                const beltStagger = [0, 0.12, 0.24, 0.38, 0.52, 0.66];
-                const beltDur = 0.32;
+                const beltStagger = [0, 0.1, 0.22, 0.36, 0.52, 0.7];
+                const beltDur = 0.26;
                 orbitalTrails.forEach((trail, i) => {
                     const bt = Math.max(0, Math.min(1, (t - beltStagger[i]) / beltDur));
                     const eb = bt * bt * (3 - 2 * bt);
@@ -1367,13 +1442,16 @@
 
                 updateOrbitalTrails();
 
-                if (t < 0.02) showFormationText("轨道带形成", "粒子汇聚成椭圆轨道...");
-                if (t > 0.45 && t < 0.48) showFormationText("轨道稳定", "六条轨道带依次就位...");
+                if (t < 0.02) showFormationText("轨道带演化", "第一条轨道带开始凝聚...", "阶段 8/9");
+                if (t > 0.18 && t < 0.21) showFormationText("轨道带演化", "第二条轨道带形成...", "阶段 8/9");
+                if (t > 0.38 && t < 0.41) showFormationText("轨道带演化", "内层轨道逐渐稳定...", "阶段 8/9");
+                if (t > 0.58 && t < 0.61) showFormationText("轨道带演化", "外层轨道带显现...", "阶段 8/9");
+                if (t > 0.78 && t < 0.81) showFormationText("轨道带演化", "六条轨道带全部就位...", "阶段 8/9");
             }
 
-            // --- 阶段6: 星空显现 (40-43s) ---
-            else if (elapsed < 43) {
-                const t = (elapsed - 40) / 3;
+            // --- 阶段9: 星系成型 (62-70s) ---
+            else if (elapsed < 70) {
+                const t = (elapsed - 62) / 8;
 
                 orbitalTrails.forEach((trail, i) => {
                     trail.mesh.material.opacity = FO.trails[i];
@@ -1382,19 +1460,22 @@
                 accretionDisk.material.opacity = FO.disk;
                 lensingRing.material.opacity = FO.lens;
                 photonRing.material.opacity = FO.photon;
+                blackHole.scale.setScalar(1);
                 accretionDisk.rotation.y += 0.001;
                 lensingRing.rotation.z += 0.0005;
                 updateOrbitalTrails();
                 const pulse = 1 + Math.sin(time * 2) * 0.02;
                 photonRing.scale.set(pulse, pulse, pulse);
 
-                starfield.material.opacity = FO.star * t;
+                starfield.material.opacity = FO.star * Math.min(1, t * 1.5);
                 starfield.rotation.y += 0.0002;
 
-                if (t < 0.03) showFormationText("星系形成完成", "卡冈图雅苏醒");
+                if (t < 0.02) showFormationText("星系成型", "遥远恒星逐渐显现...", "阶段 9/9");
+                if (t > 0.4 && t < 0.43) showFormationText("星系成型", "整个星系趋于稳定...", "阶段 9/9");
+                if (t > 0.8 && t < 0.83) showFormationText("星系形成完成", "卡冈图雅苏醒", "阶段 9/9");
             }
 
-            // --- 阶段7: 完成 ---
+            // --- 完成 ---
             else {
                 orbitalTrails.forEach((trail, i) => {
                     trail.mesh.material.opacity = FO.trails[i];
@@ -1410,6 +1491,7 @@
                 formationActive = false;
                 showClickHint();
                 hideFormationText();
+                hideFastForwardBtn();
                 statusEl.innerText = "星系形成完成";
                 statusEl.style.color = "#00ffcc";
             }
