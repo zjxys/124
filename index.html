@@ -51,14 +51,76 @@
             font-family: '站酷高端黑', 'ZCOOL KuaiLe', 'Microsoft YaHei', '微软雅黑', 'PingFang SC', sans-serif;
         }
 
-        .instruction {
-            margin-top: 10px;
-            font-size: 0.9rem;
-            background: rgba(10, 5, 25, 0.6);
-            padding: 10px;
-            border-radius: 8px;
+        /* 功能介绍展开面板 */
+        #instructions-panel {
+            position: absolute;
+            top: 65px;
+            left: 20px;
+            z-index: 10;
+            width: 320px;
+            max-width: calc(100vw - 40px);
+        }
+
+        #instructions-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(10, 5, 25, 0.7);
+            border: 1px solid rgba(130, 80, 220, 0.4);
+            border-radius: 10px;
+            padding: 8px 14px;
+            color: rgba(200, 180, 230, 0.8);
+            font-size: 0.85rem;
+            font-weight: 700;
+            letter-spacing: 2px;
+            cursor: pointer;
+            pointer-events: auto;
+            transition: all 0.3s ease;
+            user-select: none;
+            backdrop-filter: blur(4px);
+        }
+
+        #instructions-toggle:hover {
+            background: rgba(20, 10, 40, 0.85);
+            border-color: rgba(150, 100, 255, 0.6);
+            color: #cc99ff;
+            box-shadow: 0 0 12px rgba(130, 80, 255, 0.3);
+        }
+
+        #instructions-toggle .toggle-icon {
+            font-size: 1rem;
+            transition: transform 0.3s ease;
+            display: inline-block;
+        }
+
+        #instructions-panel.open #instructions-toggle .toggle-icon {
+            transform: rotate(90deg);
+        }
+
+        #instructions-content {
+            margin-top: 6px;
+            font-size: 0.85rem;
+            background: rgba(10, 5, 25, 0.85);
+            padding: 14px 16px;
+            border-radius: 10px;
             border-left: 3px solid #8855ff;
             color: rgba(200, 180, 230, 0.75);
+            max-height: 0;
+            overflow: hidden;
+            opacity: 0;
+            transition: max-height 0.4s ease, opacity 0.3s ease, padding 0.3s ease, margin 0.3s ease;
+            backdrop-filter: blur(6px);
+        }
+
+        #instructions-panel.open #instructions-content {
+            max-height: 500px;
+            opacity: 1;
+            padding: 14px 16px;
+            margin-top: 6px;
+        }
+
+        #instructions-content br:last-child {
+            display: none;
         }
 
         .status {
@@ -478,17 +540,21 @@
 
     <div id="ui-layer">
         <h1>粒子星云核心</h1>
-        <div class="instruction">
-            👋 <b>旋转手掌</b>: 水平/垂直旋转视角<br>
-            ✊ <b>握拳</b>: 远离 / ✋ <b>张开</b>: 靠近<br>
-            🖱️ <b>拖拽</b>: 旋转 / <b>滚轮</b>: 缩放<br>
-            👆 <b>点击黑洞3次</b>: 星系形成过程<br>
-            &nbsp;&nbsp;&nbsp;（缩小观看效果更佳）<br>
-            🤏 <b>长按黑洞</b>: 查看卡冈图雅简介<br>
-            ⌨️ <b>键盘666</b>: 进入黑洞内部<br>
-            &nbsp;&nbsp;&nbsp;🤏 <b>长按</b>: 查看奇点简介<br>
-            💡 <b>1 / 2</b>: 亮度降低 / 升高<br>
-            ⏹️ <b>按键3</b>: 退出内部
+        <div id="instructions-panel">
+            <div id="instructions-toggle">
+                <span class="toggle-icon">▶</span> 功能介绍
+            </div>
+            <div id="instructions-content">
+                ① <b>旋转手掌</b>: 水平/垂直旋转视角<br>
+                ② <b>握拳/张开</b>: 远离 / 靠近<br>
+                ③ <b>拖拽/滚轮</b>: 旋转 / 缩放<br>
+                ④ <b>点击黑洞3次</b>: 星系形成过程（缩小观看更佳）<br>
+                ⑤ <b>长按黑洞中心</b>: 查看卡冈图雅简介<br>
+                ⑥ <b>按键4</b>: 进入黑洞内部<br>
+                &nbsp;&nbsp;&nbsp;🤏 <b>长按</b>: 查看奇点简介<br>
+                ⑦ <b>按键1/2</b>: 亮度降低 / 升高<br>
+                ⑧ <b>按键3</b>: 退出内部
+            </div>
         </div>
         <div id="gesture-status" class="status">等待手势...</div>
     </div>
@@ -1433,6 +1499,12 @@
             btn.onclick = toggleFastForward;
         }
 
+        // 功能介绍展开/收起
+        document.getElementById('instructions-toggle').addEventListener('click', function() {
+            const panel = document.getElementById('instructions-panel');
+            panel.classList.toggle('open');
+        });
+
         function hideFastForwardBtn() {
             const btn = document.getElementById('fastforward-btn');
             btn.classList.remove('show');
@@ -2022,7 +2094,7 @@
             }
         }
 
-        // 键盘监听 - 666 触发
+        // 键盘监听
         document.addEventListener('keydown', (e) => {
             const now = performance.now();
 
@@ -2032,6 +2104,11 @@
                 return;
             }
 
+            // 按 4 进入黑洞内部
+            if (e.key === '4' && !interiorActive && !formationActive) {
+                enterInterior();
+                return;
+            }
 
             // 亮度调节 - 1减 / 2加
             if (e.key === '1' || e.key === '2') {
@@ -2049,29 +2126,6 @@
                         statusEl.style.color = "#cc6688";
                     }
                 }, 1500);
-                return;
-            }
-
-            // 只处理 6
-            if (e.key !== '6') {
-                keyBuffer = '';
-                return;
-            }
-
-            // 666 触发黑洞内部
-            if (e.key === '6') {
-                // 超过1.5秒清空缓冲
-                if (now - keyLastTime > 1500) {
-                    keyBuffer = '';
-                }
-                keyBuffer += e.key;
-                keyLastTime = now;
-
-                if (keyBuffer === '666') {
-                    keyBuffer = '';
-                    enterInterior();
-                    return;
-                }
                 return;
             }
 
