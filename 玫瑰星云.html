@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>玫瑰星云 · Rosette Nebula (NGC 2237)</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Microsoft YaHei', '微软雅黑', 'PingFang SC', sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            cursor: grab;
+        }
+        body:active { cursor: grabbing; }
+
+        #canvas-container {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px; left: 20px;
+            z-index: 10;
+            color: rgba(255,255,255,0.8);
+            pointer-events: none;
+            user-select: none;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            text-transform: uppercase;
+            letter-spacing: 6px;
+            color: #ff6677;
+            text-shadow: 0 0 18px rgba(200,50,80,1), 0 0 50px rgba(150,30,50,0.5), 0 2px 0 rgba(0,0,0,0.9);
+            font-weight: 900;
+        }
+
+        .subtitle {
+            margin-top: 6px;
+            font-size: 0.9rem;
+            color: #cc4455;
+            letter-spacing: 3px;
+            text-shadow: 0 0 12px rgba(160,40,60,0.9);
+        }
+
+        .instruction {
+            margin-top: 12px;
+            font-size: 0.85rem;
+            background: rgba(15,5,8,0.85);
+            border: 1px solid rgba(220,60,80,0.4);
+            border-radius: 10px;
+            padding: 10px 14px;
+            border-left: 3px solid rgba(230,70,90,0.9);
+            color: rgba(250,200,210,0.78);
+            line-height: 1.8;
+            backdrop-filter: blur(4px);
+        }
+
+        .info {
+            margin-top: 12px;
+            font-size: 0.8rem;
+            background: rgba(15,5,8,0.85);
+            border: 1px solid rgba(220,60,80,0.3);
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: rgba(240,190,200,0.72);
+            line-height: 1.8;
+            backdrop-filter: blur(4px);
+        }
+
+        .info b {
+            color: #ff7788;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%,-50%);
+            color: rgba(230,80,100,0.9);
+            font-size: 20px;
+            z-index: 20;
+            text-align: center;
+        }
+    </style>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+
+    <div id="loading">正在绽放宇宙玫瑰...</div>
+
+    <div id="ui-layer">
+        <h1>Rosette Nebula</h1>
+        <div class="subtitle">NGC 2237 · 玫瑰星云</div>
+        <div class="instruction">
+            🖱️ <b>拖拽</b>: 旋转视角<br>
+            🔍 <b>滚轮</b>: 缩放距离
+        </div>
+        <div class="info">
+            <b>类型</b>: 发射星云 / HII 区<br>
+            <b>距离</b>: ~5,000 光年（麒麟座）<br>
+            <b>直径</b>: ~130 光年<br>
+            <b>年龄</b>: ~500 万年<br>
+            <b>特征</b>: NGC 2244 星团 / 玫瑰环状结构 / 恒星风空腔 / Hα 发射
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        const CONFIG = {
+            // 中心星团 NGC 2244
+            clusterStars: [
+                { pos: [0, 0, 0],      radius: 4.5, color: 0xddeeff, glowColor: 0xaaccff },
+                { pos: [14, 5, -4],    radius: 5,   color: 0xddeeff, glowColor: 0xaaccff },
+                { pos: [-10, -3, 5],   radius: 4,   color: 0xaaccff, glowColor: 0x88aaff },
+                { pos: [6, -8, 8],     radius: 3.5, color: 0xffeecc, glowColor: 0xffccaa },
+                { pos: [-6, 7, -6],    radius: 4,   color: 0xddeeff, glowColor: 0xaaccff },
+                { pos: [10, 2, 10],    radius: 3,   color: 0xaaccff, glowColor: 0x88aaff },
+            ],
+            // 星云壳层参数
+            shellInner: 50,       // 空腔内半径
+            shellMain: 90,        // 主壳层（最密集）
+            shellOuter: 130,      // 外壳层
+            shellThickness: 50,   // 壳层厚度
+            // 花瓣参数
+            petalCount: 8,        // 花瓣数量
+            // 粒子数量
+            gasParticleCount: 100000,   // 气体粒子
+            dustParticleCount: 20000,   // 尘埃粒子
+            haloParticleCount: 10000,   // 外晕粒子
+            bgStarCount: 5000,           // 背景星空
+            // 倾斜
+            tiltX: 0.15,
+        };
+
+        let scene, camera, renderer, composer, controls;
+        let nebulaGroup;
+        let clusterMeshes = [];
+        let clusterGlows = [];
+        let gasParticles, gasData = null;
+        let dustParticles, dustData = null;
+        let haloParticles, haloData = null;
+        let bgStarfield;
+        let bloomPass;
+        let time = 0;
+
+        const loadingEl = document.getElementById('loading');
+
+        function createParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+            g.addColorStop(0, 'rgba(255,255,255,1)');
+            g.addColorStop(0.2, 'rgba(255,255,255,0.8)');
+            g.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+            g.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, 32, 32);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function noise3D(x, y, z) {
+            return Math.sin(x * 0.03) * Math.cos(y * 0.04) * Math.sin(z * 0.035)
+                 + Math.sin(x * 0.08 + 1) * Math.cos(y * 0.07 + 2) * Math.sin(z * 0.06 + 3) * 0.5
+                 + Math.sin(x * 0.15 + 4) * Math.cos(y * 0.13 + 5) * Math.sin(z * 0.11 + 6) * 0.25;
+        }
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000000, 0.00015);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 5000);
+            camera.position.set(0, 40, 350);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0;
+            container.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.06;
+            controls.rotateSpeed = 0.6;
+            controls.zoomSpeed = 1.2;
+            controls.minDistance = 50;
+            controls.maxDistance = 1500;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.2;
+
+            const renderPass = new RenderPass(scene, camera);
+            bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                2.0, 0.6, 0.0
+            );
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderPass);
+            composer.addPass(bloomPass);
+
+            const tex = createParticleTexture();
+
+            // 中心星团光源
+            const clusterLight = new THREE.PointLight(0xaaccff, 4.0, 500);
+            scene.add(clusterLight);
+            const ambient = new THREE.AmbientLight(0x0a0510, 0.3);
+            scene.add(ambient);
+
+            nebulaGroup = new THREE.Group();
+            nebulaGroup.rotation.x = CONFIG.tiltX;
+            scene.add(nebulaGroup);
+
+            // === 中心星团 NGC 2244 ===
+            for (const starDef of CONFIG.clusterStars) {
+                const star = new THREE.Mesh(
+                    new THREE.SphereGeometry(starDef.radius, 24, 24),
+                    new THREE.MeshBasicMaterial({ color: starDef.color })
+                );
+                star.position.set(starDef.pos[0], starDef.pos[1], starDef.pos[2]);
+                nebulaGroup.add(star);
+                clusterMeshes.push(star);
+
+                const glow1 = new THREE.Mesh(
+                    new THREE.SphereGeometry(starDef.radius * 2.5, 24, 24),
+                    new THREE.MeshBasicMaterial({
+                        color: starDef.glowColor, transparent: true, opacity: 0.4,
+                        blending: THREE.AdditiveBlending, side: THREE.BackSide
+                    })
+                );
+                glow1.position.copy(star.position);
+                nebulaGroup.add(glow1);
+                clusterGlows.push(glow1);
+
+                const glow2 = new THREE.Mesh(
+                    new THREE.SphereGeometry(starDef.radius * 5, 24, 24),
+                    new THREE.MeshBasicMaterial({
+                        color: starDef.glowColor, transparent: true, opacity: 0.12,
+                        blending: THREE.AdditiveBlending, side: THREE.BackSide
+                    })
+                );
+                glow2.position.copy(star.position);
+                nebulaGroup.add(glow2);
+                clusterGlows.push(glow2);
+
+                const glow3 = new THREE.Mesh(
+                    new THREE.SphereGeometry(starDef.radius * 10, 24, 24),
+                    new THREE.MeshBasicMaterial({
+                        color: starDef.glowColor, transparent: true, opacity: 0.04,
+                        blending: THREE.AdditiveBlending, side: THREE.BackSide
+                    })
+                );
+                glow3.position.copy(star.position);
+                nebulaGroup.add(glow3);
+                clusterGlows.push(glow3);
+            }
+
+            // === 气体粒子 ===
+            gasParticles = createGasParticles(tex);
+            nebulaGroup.add(gasParticles);
+
+            // === 尘埃粒子 ===
+            dustParticles = createDustParticles(tex);
+            nebulaGroup.add(dustParticles);
+
+            // === 外晕 ===
+            haloParticles = createHaloParticles(tex);
+            nebulaGroup.add(haloParticles);
+
+            // === 背景星空 ===
+            bgStarfield = createBgStarfield();
+            scene.add(bgStarfield);
+
+            renderer.domElement.addEventListener('pointerdown', () => { controls.autoRotate = false; });
+            window.addEventListener('resize', onResize);
+
+            loadingEl.style.display = 'none';
+        }
+
+        // ==========================================
+        // 气体粒子 — 玫瑰环状壳层 + 花瓣结构
+        // ==========================================
+        function createGasParticles(texture) {
+            const count = CONFIG.gasParticleCount;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+
+            gasData = {
+                baseR: new Float32Array(count),
+                baseTheta: new Float32Array(count),
+                basePhi: new Float32Array(count),
+                phases: new Float32Array(count),
+                speeds: new Float32Array(count),
+            };
+
+            for (let i = 0; i < count; i++) {
+                // 在壳层中分布（空腔 + 主壳层 + 外壳层）
+                let r;
+                const rand = Math.random();
+                if (rand < 0.7) {
+                    // 70% 在主壳层（玫瑰环最密集部分）
+                    r = CONFIG.shellMain + (Math.random() - 0.5) * CONFIG.shellThickness * 1.5;
+                } else if (rand < 0.9) {
+                    // 20% 在外壳层
+                    r = CONFIG.shellOuter - 20 + Math.random() * 40;
+                } else {
+                    // 10% 在空腔内（稀疏）
+                    r = CONFIG.shellInner + Math.random() * 25;
+                }
+
+                // 球面坐标，偏向赤道面（形成环形/donut）
+                const theta = Math.random() * Math.PI * 2;
+                const phiCenter = Math.PI / 2;
+                const phiSpread = 0.7;
+                const phi = phiCenter + (Math.random() - 0.5) * phiSpread * Math.PI;
+
+                // 花瓣效果 — 某些方向更密集
+                const petalAngle = (theta * CONFIG.petalCount) % (Math.PI * 2);
+                const petalBoost = 1 + Math.cos(petalAngle) * 0.3;
+                const finalR = r * petalBoost;
+
+                // 噪声让形状更有机
+                const baseX = finalR * Math.sin(phi) * Math.cos(theta);
+                const baseY = finalR * Math.cos(phi) * 0.8;
+                const baseZ = finalR * Math.sin(phi) * Math.sin(theta);
+                const n = noise3D(baseX, baseY, baseZ) * 10;
+
+                positions[i * 3]     = baseX + n * 0.3;
+                positions[i * 3 + 1] = baseY + n * 0.2;
+                positions[i * 3 + 2] = baseZ + n * 0.3;
+
+                gasData.baseR[i] = finalR;
+                gasData.baseTheta[i] = theta;
+                gasData.basePhi[i] = phi;
+                gasData.phases[i] = Math.random() * Math.PI * 2;
+                gasData.speeds[i] = 0.08 + Math.random() * 0.25;
+
+                // 颜色：按距离着色
+                const distFactor = (finalR - CONFIG.shellInner) / (CONFIG.shellOuter - CONFIG.shellInner);
+                const clampedT = Math.max(0, Math.min(1, distFactor));
+                let r_col, g_col, b_col;
+
+                // 玫瑰星云以 H-alpha 红色为主，混合 OIII 蓝绿
+                const noiseCol = noise3D(baseX * 2, baseY * 2, baseZ * 2);
+
+                if (noiseCol > 0.25 && clampedT > 0.3) {
+                    // OIII 蓝绿色斑
+                    r_col = 0.2 + Math.random() * 0.15;
+                    g_col = 0.55 + Math.random() * 0.2;
+                    b_col = 0.7 + Math.random() * 0.2;
+                } else if (noiseCol > -0.2) {
+                    // H-alpha 红粉色（主要颜色）
+                    r_col = 0.85 + Math.random() * 0.15;
+                    g_col = 0.15 + Math.random() * 0.12;
+                    b_col = 0.2 + Math.random() * 0.1;
+                } else {
+                    // 深红/暗粉
+                    r_col = 0.6 + Math.random() * 0.2;
+                    g_col = 0.1 + Math.random() * 0.08;
+                    b_col = 0.12 + Math.random() * 0.08;
+                }
+
+                // 空腔内更暗
+                const cavityFactor = finalR < CONFIG.shellInner ? 0.3 : 1.0;
+                const brightness = (1.0 - clampedT * 0.4) * (0.4 + Math.random() * 0.6) * cavityFactor;
+                colors[i * 3]     = r_col * brightness;
+                colors[i * 3 + 1] = g_col * brightness;
+                colors[i * 3 + 2] = b_col * brightness;
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 3.0, map: texture, vertexColors: true, transparent: true,
+                opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false,
+                sizeAttenuation: true
+            }));
+        }
+
+        // ==========================================
+        // 尘埃粒子 — 暗尘埃带
+        // ==========================================
+        function createDustParticles(texture) {
+            const count = CONFIG.dustParticleCount;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+
+            dustData = {
+                baseR: new Float32Array(count),
+                baseTheta: new Float32Array(count),
+                basePhi: new Float32Array(count),
+                phases: new Float32Array(count),
+            };
+
+            for (let i = 0; i < count; i++) {
+                const r = CONFIG.shellMain + (Math.random() - 0.5) * CONFIG.shellThickness * 1.2;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.PI / 2 + (Math.random() - 0.5) * 0.5 * Math.PI;
+
+                const x = r * Math.sin(phi) * Math.cos(theta);
+                const y = r * Math.cos(phi) * 0.8;
+                const z = r * Math.sin(phi) * Math.sin(theta);
+
+                const n = noise3D(x, y, z) * 8;
+
+                positions[i * 3]     = x + n * 0.3;
+                positions[i * 3 + 1] = y + n * 0.2;
+                positions[i * 3 + 2] = z + n * 0.3;
+
+                dustData.baseR[i] = r;
+                dustData.baseTheta[i] = theta;
+                dustData.basePhi[i] = phi;
+                dustData.phases[i] = Math.random() * Math.PI * 2;
+
+                // 暗褐色尘埃
+                const brightness = 0.05 + Math.random() * 0.12;
+                colors[i * 3]     = brightness * 0.5;
+                colors[i * 3 + 1] = brightness * 0.3;
+                colors[i * 3 + 2] = brightness * 0.2;
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 2.5, map: texture, vertexColors: true, transparent: true,
+                opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false,
+                sizeAttenuation: true
+            }));
+        }
+
+        // ==========================================
+        // 外晕粒子
+        // ==========================================
+        function createHaloParticles(texture) {
+            const count = CONFIG.haloParticleCount;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+
+            haloData = {
+                baseR: new Float32Array(count),
+                baseTheta: new Float32Array(count),
+                basePhi: new Float32Array(count),
+                phases: new Float32Array(count),
+            };
+
+            for (let i = 0; i < count; i++) {
+                const r = CONFIG.shellOuter + Math.random() * 80;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+
+                positions[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
+                positions[i * 3 + 1] = r * Math.cos(phi) * 0.8;
+                positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+
+                haloData.baseR[i] = r;
+                haloData.baseTheta[i] = theta;
+                haloData.basePhi[i] = phi;
+                haloData.phases[i] = Math.random() * Math.PI * 2;
+
+                // 暗红粉色
+                const brightness = 0.08 + Math.random() * 0.12;
+                colors[i * 3]     = brightness * 0.7;
+                colors[i * 3 + 1] = brightness * 0.25;
+                colors[i * 3 + 2] = brightness * 0.2;
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 2.0, map: texture, vertexColors: true, transparent: true,
+                opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false,
+                sizeAttenuation: true
+            }));
+        }
+
+        // ==========================================
+        // 背景星空
+        // ==========================================
+        function createBgStarfield() {
+            const geo = new THREE.BufferGeometry();
+            const positions = [];
+            const colors = [];
+            const count = CONFIG.bgStarCount;
+            for (let i = 0; i < count; i++) {
+                const r = 800 + Math.random() * 1500;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                positions.push(
+                    r * Math.sin(phi) * Math.cos(theta),
+                    r * Math.sin(phi) * Math.sin(theta),
+                    r * Math.cos(phi)
+                );
+                const b = 0.4 + Math.random() * 0.5;
+                const t = Math.random();
+                if (t < 0.65) {
+                    colors.push(b, b, b);
+                } else if (t < 0.85) {
+                    colors.push(b, b * 0.8, b * 0.5);
+                } else {
+                    colors.push(b * 0.6, b * 0.7, b);
+                }
+            }
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 1.5, vertexColors: true, transparent: true,
+                opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false
+            }));
+        }
+
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            time += 0.004;
+
+            // 星团辉光脉动
+            for (let i = 0; i < clusterGlows.length; i++) {
+                const glow = clusterGlows[i];
+                const phase = i * 0.4;
+                const pulse = 1 + Math.sin(time * 2 + phase) * 0.06;
+                glow.scale.set(pulse, pulse, pulse);
+                if (i % 3 === 0) {
+                    glow.material.opacity = 0.35 + Math.sin(time * 2.5 + phase) * 0.08;
+                }
+            }
+
+            // 气体粒子缓慢漂移
+            if (gasParticles && gasData) {
+                const posAttr = gasParticles.geometry.attributes.position;
+                const arr = posAttr.array;
+                const n = gasData.baseR.length;
+
+                for (let i = 0; i < n; i++) {
+                    const r = gasData.baseR[i] + Math.sin(time * gasData.speeds[i] + gasData.phases[i]) * 2;
+                    const theta = gasData.baseTheta[i] + time * 0.003;
+                    const phi = gasData.basePhi[i];
+
+                    arr[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
+                    arr[i * 3 + 1] = r * Math.cos(phi) * 0.8;
+                    arr[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+                }
+                posAttr.needsUpdate = true;
+            }
+
+            // 尘埃粒子漂移
+            if (dustParticles && dustData) {
+                const posAttr = dustParticles.geometry.attributes.position;
+                const arr = posAttr.array;
+                const n = dustData.baseR.length;
+
+                for (let i = 0; i < n; i++) {
+                    const r = dustData.baseR[i] + Math.sin(time * 0.2 + dustData.phases[i]) * 1.5;
+                    const theta = dustData.baseTheta[i] + time * 0.003;
+                    const phi = dustData.basePhi[i];
+
+                    arr[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
+                    arr[i * 3 + 1] = r * Math.cos(phi) * 0.8;
+                    arr[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+                }
+                posAttr.needsUpdate = true;
+            }
+
+            // 外晕漂移
+            if (haloParticles && haloData) {
+                const posAttr = haloParticles.geometry.attributes.position;
+                const arr = posAttr.array;
+                const n = haloData.baseR.length;
+
+                for (let i = 0; i < n; i++) {
+                    const r = haloData.baseR[i] + Math.sin(time * 0.1 + haloData.phases[i]) * 2;
+                    const theta = haloData.baseTheta[i] + time * 0.002;
+                    const phi = haloData.basePhi[i];
+
+                    arr[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
+                    arr[i * 3 + 1] = r * Math.cos(phi) * 0.8;
+                    arr[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+                }
+                posAttr.needsUpdate = true;
+            }
+
+            // 星云组缓慢旋转
+            if (nebulaGroup) {
+                nebulaGroup.rotation.y += 0.0003;
+            }
+
+            if (bgStarfield) bgStarfield.rotation.y += 0.00005;
+
+            controls.update();
+            composer.render();
+        }
+
+        init();
+        animate();
+    </script>
+</body>
+</html>

@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>蜘蛛星云 · Tarantula Nebula (NGC 2070)</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Microsoft YaHei', '微软雅黑', 'PingFang SC', sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            cursor: grab;
+        }
+        body:active { cursor: grabbing; }
+
+        #canvas-container {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px; left: 20px;
+            z-index: 10;
+            color: rgba(255,255,255,0.8);
+            pointer-events: none;
+            user-select: none;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            text-transform: uppercase;
+            letter-spacing: 6px;
+            color: #ff5577;
+            text-shadow: 0 0 18px rgba(200,40,80,1), 0 0 50px rgba(150,20,50,0.5), 0 2px 0 rgba(0,0,0,0.9);
+            font-weight: 900;
+        }
+
+        .subtitle {
+            margin-top: 6px;
+            font-size: 0.9rem;
+            color: #cc4455;
+            letter-spacing: 3px;
+            text-shadow: 0 0 12px rgba(160,30,50,0.9);
+        }
+
+        .instruction {
+            margin-top: 12px;
+            font-size: 0.85rem;
+            background: rgba(15,5,8,0.85);
+            border: 1px solid rgba(220,50,80,0.4);
+            border-radius: 10px;
+            padding: 10px 14px;
+            border-left: 3px solid rgba(230,60,90,0.9);
+            color: rgba(250,200,210,0.78);
+            line-height: 1.8;
+            backdrop-filter: blur(4px);
+        }
+
+        .info {
+            margin-top: 12px;
+            font-size: 0.8rem;
+            background: rgba(15,5,8,0.85);
+            border: 1px solid rgba(220,50,80,0.3);
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: rgba(240,190,200,0.72);
+            line-height: 1.8;
+            backdrop-filter: blur(4px);
+        }
+
+        .info b {
+            color: #ff6677;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%,-50%);
+            color: rgba(220,60,90,0.9);
+            font-size: 20px;
+            z-index: 20;
+            text-align: center;
+        }
+    </style>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+
+    <div id="loading">正在编织宇宙蛛网...</div>
+
+    <div id="ui-layer">
+        <h1>Tarantula Nebula</h1>
+        <div class="subtitle">NGC 2070 / 30 Doradus · 蜘蛛星云</div>
+        <div class="instruction">
+            🖱️ <b>拖拽</b>: 旋转视角<br>
+            🔍 <b>滚轮</b>: 缩放距离
+        </div>
+        <div class="info">
+            <b>类型</b>: 发射星云 / HII 区<br>
+            <b>距离</b>: ~160,000 光年（大麦哲伦云）<br>
+            <b>直径</b>: ~1,000 光年<br>
+            <b>特征</b>: R136 星团 / R136a1 / 蜘蛛状丝 / 超大质量恒星
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        const CONFIG = {
+            // R136 中心星团
+            r136Stars: [
+                { pos: [0, 0, 0],     radius: 7, color: 0xddeeff, glowColor: 0xaaccff },  // R136a1
+                { pos: [12, 5, -3],   radius: 5, color: 0xddeeff, glowColor: 0xaaccff },
+                { pos: [-8, -4, 6],   radius: 4.5, color: 0xaaccff, glowColor: 0x88aaff },
+                { pos: [7, -7, 8],    radius: 4, color: 0xddeeff, glowColor: 0xaaccff },
+                { pos: [-5, 6, -5],   radius: 4, color: 0xddeeff, glowColor: 0xaaccff },
+                { pos: [15, 3, 5],    radius: 3.5, color: 0xaaccff, glowColor: 0x88aaff },
+                { pos: [-12, 2, -8],  radius: 3.5, color: 0xaaccff, glowColor: 0x88aaff },
+                { pos: [3, 10, -3],   radius: 3, color: 0xddeeff, glowColor: 0xaaccff },
+                { pos: [-3, -10, 3],  radius: 3, color: 0xddeeff, glowColor: 0xaaccff },
+            ],
+            // Hodge 301 — 老星团
+            hodgeStars: [
+                { pos: [60, 30, -20], radius: 3, color: 0xffeecc, glowColor: 0xffccaa },
+                { pos: [55, 35, -15], radius: 2.5, color: 0xffeecc, glowColor: 0xffccaa },
+            ],
+            // 星云参数
+            coreRadius: 40,
+            legRadius: 200,
+            spiderLegs: 8,
+            legParticles: 3000,
+            // 粒子
+            gasCount: 100000,
+            dustCount: 20000,
+            haloCount: 10000,
+            bgStarCount: 6000,
+            tiltX: 0.15,
+            tiltZ: -0.08,
+        };
+
+        let scene, camera, renderer, composer, controls;
+        let nebulaGroup;
+        let clusterGlows = [];
+        let spiderLegs = [];
+        let gasParticles, gasData = null;
+        let dustParticles, dustData = null;
+        let haloParticles, haloData = null;
+        let bgStarfield;
+        let bloomPass;
+        let time = 0;
+
+        const loadingEl = document.getElementById('loading');
+
+        function createParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+            g.addColorStop(0, 'rgba(255,255,255,1)');
+            g.addColorStop(0.2, 'rgba(255,255,255,0.8)');
+            g.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+            g.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, 32, 32);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function noise3D(x, y, z) {
+            return Math.sin(x * 0.03) * Math.cos(y * 0.04) * Math.sin(z * 0.035)
+                 + Math.sin(x * 0.08 + 1) * Math.cos(y * 0.07 + 2) * Math.sin(z * 0.06 + 3) * 0.5
+                 + Math.sin(x * 0.15 + 4) * Math.cos(y * 0.13 + 5) * Math.sin(z * 0.11 + 6) * 0.25;
+        }
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000000, 0.00012);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 5000);
+            camera.position.set(0, 50, 450);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0;
+            container.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.06;
+            controls.rotateSpeed = 0.6;
+            controls.zoomSpeed = 1.2;
+            controls.minDistance = 50;
+            controls.maxDistance = 2000;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.2;
+
+            const renderPass = new RenderPass(scene, camera);
+            bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                2.5, 0.6, 0.0
+            );
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderPass);
+            composer.addPass(bloomPass);
+
+            const tex = createParticleTexture();
+
+            const coreLight = new THREE.PointLight(0x88aaff, 4.5, 600);
+            scene.add(coreLight);
+            const ambient = new THREE.AmbientLight(0x0a0510, 0.3);
+            scene.add(ambient);
+
+            nebulaGroup = new THREE.Group();
+            nebulaGroup.rotation.x = CONFIG.tiltX;
+            nebulaGroup.rotation.z = CONFIG.tiltZ;
+            scene.add(nebulaGroup);
+
+            // === R136 星团 ===
+            for (const starDef of CONFIG.r136Stars) {
+                const star = new THREE.Mesh(
+                    new THREE.SphereGeometry(starDef.radius, 24, 24),
+                    new THREE.MeshBasicMaterial({ color: starDef.color })
+                );
+                star.position.set(starDef.pos[0], starDef.pos[1], starDef.pos[2]);
+                nebulaGroup.add(star);
+
+                for (let g = 0; g < 3; g++) {
+                    const glowR = starDef.radius * (2.5 + g * 2.5);
+                    const glow = new THREE.Mesh(
+                        new THREE.SphereGeometry(glowR, 24, 24),
+                        new THREE.MeshBasicMaterial({
+                            color: starDef.glowColor, transparent: true,
+                            opacity: g === 0 ? 0.45 : (g === 1 ? 0.15 : 0.05),
+                            blending: THREE.AdditiveBlending, side: THREE.BackSide
+                        })
+                    );
+                    glow.position.copy(star.position);
+                    nebulaGroup.add(glow);
+                    clusterGlows.push(glow);
+                }
+            }
+
+            // === Hodge 301 老星团 ===
+            for (const starDef of CONFIG.hodgeStars) {
+                const star = new THREE.Mesh(
+                    new THREE.SphereGeometry(starDef.radius, 24, 24),
+                    new THREE.MeshBasicMaterial({ color: starDef.color })
+                );
+                star.position.set(starDef.pos[0], starDef.pos[1], starDef.pos[2]);
+                nebulaGroup.add(star);
+
+                for (let g = 0; g < 2; g++) {
+                    const glowR = starDef.radius * (3 + g * 3);
+                    const glow = new THREE.Mesh(
+                        new THREE.SphereGeometry(glowR, 24, 24),
+                        new THREE.MeshBasicMaterial({
+                            color: starDef.glowColor, transparent: true,
+                            opacity: g === 0 ? 0.3 : 0.08,
+                            blending: THREE.AdditiveBlending, side: THREE.BackSide
+                        })
+                    );
+                    glow.position.copy(star.position);
+                    nebulaGroup.add(glow);
+                    clusterGlows.push(glow);
+                }
+            }
+
+            // === 蜘蛛腿状结构（核心特征）===
+            spiderLegs = createSpiderLegs(tex);
+            for (const leg of spiderLegs) {
+                nebulaGroup.add(leg);
+            }
+
+            // === 气体粒子 ===
+            gasParticles = createGasParticles(tex);
+            nebulaGroup.add(gasParticles);
+
+            // === 暗尘埃 ===
+            dustParticles = createDustCloud(tex);
+            nebulaGroup.add(dustParticles);
+
+            // === 外晕 ===
+            haloParticles = createHaloParticles(tex);
+            nebulaGroup.add(haloParticles);
+
+            // === 背景星空 ===
+            bgStarfield = createBgStarfield();
+            scene.add(bgStarfield);
+
+            renderer.domElement.addEventListener('pointerdown', () => { controls.autoRotate = false; });
+            window.addEventListener('resize', onResize);
+
+            loadingEl.style.display = 'none';
+        }
+
+        // ==========================================
+        // 蜘蛛腿状结构 — 核心视觉特征
+        // 长而弯曲的丝状结构从中心向外延伸
+        // ==========================================
+        function createSpiderLegs(texture) {
+            const legs = [];
+
+            for (let l = 0; l < CONFIG.spiderLegs; l++) {
+                const angle = (l / CONFIG.spiderLegs) * Math.PI * 2 + Math.random() * 0.3;
+                const particlesPerLeg = CONFIG.legParticles;
+                const geo = new THREE.BufferGeometry();
+                const positions = new Float32Array(particlesPerLeg * 3);
+                const colors = new Float32Array(particlesPerLeg * 3);
+
+                // 腿的长度和宽度
+                const legLen = CONFIG.legRadius * (0.7 + Math.random() * 0.4);
+                const legWidth = 6 + Math.random() * 8;
+
+                // 弯曲参数
+                const bend1 = (Math.random() - 0.5) * 60;
+                const bend2 = (Math.random() - 0.5) * 40;
+                const bend3 = (Math.random() - 0.5) * 30;
+
+                // 腿的方向（从中心向外）
+                const dirX = Math.cos(angle);
+                const dirY = 0;
+                const dirZ = Math.sin(angle);
+
+                // 垂直弯曲方向
+                const perpX = -dirZ;
+                const perpZ = dirX;
+
+                for (let i = 0; i < particlesPerLeg; i++) {
+                    const t = Math.random();
+                    const dist = t * legLen;
+
+                    // S型弯曲
+                    const bend = Math.sin(t * 3) * bend1 + Math.sin(t * 5) * bend2;
+
+                    // 垂直方向偏移
+                    const vertOffset = Math.sin(t * 2) * bend3;
+
+                    // 随距离增加的散布
+                    const spread = legWidth * (0.5 + t * 0.8);
+
+                    const x = dirX * dist + perpX * bend + (Math.random() - 0.5) * spread;
+                    const y = vertOffset + (Math.random() - 0.5) * spread * 0.8;
+                    const z = dirZ * bend + perpZ * bend + (Math.random() - 0.5) * spread;
+
+                    positions[i * 3]     = x;
+                    positions[i * 3 + 1] = y;
+                    positions[i * 3 + 2] = z;
+
+                    // 颜色：从中心红色到外缘蓝绿
+                    const colorMix = t;
+                    let r_col, g_col, b_col;
+
+                    if (colorMix < 0.3) {
+                        // 内段 — 红粉色 H-alpha
+                        r_col = 0.85 + Math.random() * 0.15;
+                        g_col = 0.12 + Math.random() * 0.1;
+                        b_col = 0.18 + Math.random() * 0.08;
+                    } else if (colorMix < 0.65) {
+                        // 中段 — 橙红过渡
+                        r_col = 0.6 + Math.random() * 0.2;
+                        g_col = 0.25 + Math.random() * 0.15;
+                        b_col = 0.2 + Math.random() * 0.1;
+                    } else {
+                        // 外段 — 蓝绿 OIII
+                        r_col = 0.15 + Math.random() * 0.12;
+                        g_col = 0.5 + Math.random() * 0.2;
+                        b_col = 0.65 + Math.random() * 0.2;
+                    }
+
+                    const intensity = Math.sin(Math.min(t, 1-t) * Math.PI * 1.5) * (0.4 + Math.random() * 0.5);
+                    colors[i * 3]     = r_col * intensity;
+                    colors[i * 3 + 1] = g_col * intensity;
+                    colors[i * 3 + 2] = b_col * intensity;
+                }
+
+                geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+                const leg = new THREE.Points(geo, new THREE.PointsMaterial({
+                    size: 3.0, map: texture, vertexColors: true, transparent: true,
+                    opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false,
+                    sizeAttenuation: true
+                }));
+                leg.userData = {
+                    phase: Math.random() * Math.PI * 2,
+                    speed: 0.03 + Math.random() * 0.08,
+                };
+                legs.push(leg);
+            }
+
+            return legs;
+        }
+
+        // ==========================================
+        // 气体粒子 — 多色发射星云
+        // ==========================================
+        function createGasParticles(texture) {
+            const count = CONFIG.gasCount;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+
+            gasData = {
+                basePos: new Float32Array(count * 3),
+                phases: new Float32Array(count),
+                speeds: new Float32Array(count),
+            };
+
+            for (let i = 0; i < count; i++) {
+                // 椭球分布偏向中心
+                const r = CONFIG.coreRadius * 1.5 + Math.pow(Math.random(), 0.5) * CONFIG.legRadius;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+
+                let x = r * Math.sin(phi) * Math.cos(theta);
+                let y = r * Math.cos(phi) * 0.8;
+                let z = r * Math.sin(phi) * Math.sin(theta);
+
+                // 噪声变形
+                const n = noise3D(x, y, z) * 15;
+                x += n * 0.3;
+                y += n * 0.2;
+                z += n * 0.3;
+
+                positions[i * 3]     = x;
+                positions[i * 3 + 1] = y;
+                positions[i * 3 + 2] = z;
+
+                gasData.basePos[i * 3]     = x;
+                gasData.basePos[i * 3 + 1] = y;
+                gasData.basePos[i * 3 + 2] = z;
+                gasData.phases[i] = Math.random() * Math.PI * 2;
+                gasData.speeds[i] = 0.06 + Math.random() * 0.2;
+
+                // 颜色：按距离和噪声
+                const distFactor = r / CONFIG.legRadius;
+                const noiseVal = noise3D(x * 1.5, y * 1.5, z * 1.5);
+                let r_col, g_col, b_col;
+
+                if (distFactor < 0.3) {
+                    // 中心 — 蓝白热区
+                    r_col = 0.5 + Math.random() * 0.2;
+                    g_col = 0.7 + Math.random() * 0.2;
+                    b_col = 0.9 + Math.random() * 0.1;
+                } else if (noiseVal > 0.3) {
+                    // H-alpha 红粉色
+                    r_col = 0.88 + Math.random() * 0.12;
+                    g_col = 0.12 + Math.random() * 0.1;
+                    b_col = 0.18 + Math.random() * 0.08;
+                } else if (noiseVal > -0.05) {
+                    // OIII 绿色
+                    r_col = 0.15 + Math.random() * 0.12;
+                    g_col = 0.55 + Math.random() * 0.2;
+                    b_col = 0.5 + Math.random() * 0.15;
+                } else if (noiseVal > -0.3) {
+                    // 蓝色
+                    r_col = 0.15 + Math.random() * 0.1;
+                    g_col = 0.3 + Math.random() * 0.15;
+                    b_col = 0.7 + Math.random() * 0.2;
+                } else {
+                    // 深红
+                    r_col = 0.6 + Math.random() * 0.15;
+                    g_col = 0.08 + Math.random() * 0.06;
+                    b_col = 0.1 + Math.random() * 0.06;
+                }
+
+                const brightness = (1.0 - distFactor * 0.4) * (0.3 + Math.random() * 0.6);
+                colors[i * 3]     = r_col * brightness;
+                colors[i * 3 + 1] = g_col * brightness;
+                colors[i * 3 + 2] = b_col * brightness;
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 3.0, map: texture, vertexColors: true, transparent: true,
+                opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false,
+                sizeAttenuation: true
+            }));
+        }
+
+        // ==========================================
+        // 暗尘埃云
+        // ==========================================
+        function createDustCloud(texture) {
+            const count = CONFIG.dustCount;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+
+            dustData = {
+                basePos: new Float32Array(count * 3),
+                phases: new Float32Array(count),
+            };
+
+            for (let i = 0; i < count; i++) {
+                const r = CONFIG.coreRadius + Math.random() * CONFIG.legRadius * 0.8;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+
+                const x = r * Math.sin(phi) * Math.cos(theta);
+                const y = r * Math.cos(phi) * 0.8;
+                const z = r * Math.sin(phi) * Math.sin(theta);
+
+                const n = noise3D(x, y, z) * 10;
+
+                positions[i * 3]     = x + n;
+                positions[i * 3 + 1] = y + n * 0.5;
+                positions[i * 3 + 2] = z + n;
+
+                dustData.basePos[i * 3]     = positions[i * 3];
+                dustData.basePos[i * 3 + 1] = positions[i * 3 + 1];
+                dustData.basePos[i * 3 + 2] = positions[i * 3 + 2];
+                dustData.phases[i] = Math.random() * Math.PI * 2;
+
+                const brightness = 0.04 + Math.random() * 0.08;
+                colors[i * 3]     = brightness * 0.5;
+                colors[i * 3 + 1] = brightness * 0.3;
+                colors[i * 3 + 2] = brightness * 0.15;
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 2.5, map: texture, vertexColors: true, transparent: true,
+                opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false,
+                sizeAttenuation: true
+            }));
+        }
+
+        // ==========================================
+        // 外晕粒子
+        // ==========================================
+        function createHaloParticles(texture) {
+            const count = CONFIG.haloCount;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+
+            haloData = {
+                basePos: new Float32Array(count * 3),
+                phases: new Float32Array(count),
+            };
+
+            for (let i = 0; i < count; i++) {
+                const r = CONFIG.legRadius + Math.random() * 100;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+
+                const x = r * Math.sin(phi) * Math.cos(theta);
+                const y = r * Math.cos(phi) * 0.8;
+                const z = r * Math.sin(phi) * Math.sin(theta);
+
+                positions[i * 3]     = x;
+                positions[i * 3 + 1] = y;
+                positions[i * 3 + 2] = z;
+
+                haloData.basePos[i * 3]     = x;
+                haloData.basePos[i * 3 + 1] = y;
+                haloData.basePos[i * 3 + 2] = z;
+                haloData.phases[i] = Math.random() * Math.PI * 2;
+
+                const brightness = 0.06 + Math.random() * 0.1;
+                const t = Math.random();
+                if (t < 0.5) {
+                    colors[i * 3] = brightness * 0.7;
+                    colors[i * 3 + 1] = brightness * 0.2;
+                    colors[i * 3 + 2] = brightness * 0.15;
+                } else {
+                    colors[i * 3] = brightness * 0.2;
+                    colors[i * 3 + 1] = brightness * 0.45;
+                    colors[i * 3 + 2] = brightness * 0.6;
+                }
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 2.0, map: texture, vertexColors: true, transparent: true,
+                opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false,
+                sizeAttenuation: true
+            }));
+        }
+
+        // ==========================================
+        // 背景星空
+        // ==========================================
+        function createBgStarfield() {
+            const geo = new THREE.BufferGeometry();
+            const positions = [];
+            const colors = [];
+            const count = CONFIG.bgStarCount;
+            for (let i = 0; i < count; i++) {
+                const r = 800 + Math.random() * 1500;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                positions.push(
+                    r * Math.sin(phi) * Math.cos(theta),
+                    r * Math.sin(phi) * Math.sin(theta),
+                    r * Math.cos(phi)
+                );
+                const b = 0.4 + Math.random() * 0.5;
+                const t = Math.random();
+                if (t < 0.6) {
+                    colors.push(b, b, b);
+                } else if (t < 0.8) {
+                    colors.push(b, b * 0.8, b * 0.5);
+                } else {
+                    colors.push(b * 0.6, b * 0.7, b);
+                }
+            }
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 1.5, vertexColors: true, transparent: true,
+                opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false
+            }));
+        }
+
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            time += 0.004;
+
+            // 星团辉光脉动
+            for (let i = 0; i < clusterGlows.length; i++) {
+                const glow = clusterGlows[i];
+                const phase = i * 0.3;
+                const pulse = 1 + Math.sin(time * 2 + phase) * 0.06;
+                glow.scale.set(pulse, pulse, pulse);
+                if (i % 3 === 0) {
+                    glow.material.opacity = 0.4 + Math.sin(time * 2.5 + phase) * 0.08;
+                }
+            }
+
+            // 蜘蛛腿脉动
+            for (const leg of spiderLegs) {
+                const ud = leg.userData;
+                if (ud) {
+                    const expand = 1 + Math.sin(time * ud.speed + ud.phase) * 0.015;
+                    leg.scale.set(expand, expand, expand);
+                }
+            }
+
+            // 气体粒子漂移
+            if (gasParticles && gasData) {
+                const posAttr = gasParticles.geometry.attributes.position;
+                const arr = posAttr.array;
+                const n = gasData.basePos.length / 3;
+                for (let i = 0; i < n; i++) {
+                    const baseX = gasData.basePos[i * 3];
+                    const baseY = gasData.basePos[i * 3 + 1];
+                    const baseZ = gasData.basePos[i * 3 + 2];
+                    const phase = gasData.phases[i];
+                    const speed = gasData.speeds[i];
+                    arr[i * 3]     = baseX + Math.sin(time * speed + phase) * 2.5;
+                    arr[i * 3 + 1] = baseY + Math.cos(time * speed * 0.7 + phase) * 2;
+                    arr[i * 3 + 2] = baseZ + Math.sin(time * speed * 0.5 + phase) * 2;
+                }
+                posAttr.needsUpdate = true;
+            }
+
+            // 尘埃漂移
+            if (dustParticles && dustData) {
+                const posAttr = dustParticles.geometry.attributes.position;
+                const arr = posAttr.array;
+                const n = dustData.basePos.length / 3;
+                for (let i = 0; i < n; i++) {
+                    const baseX = dustData.basePos[i * 3];
+                    const baseY = dustData.basePos[i * 3 + 1];
+                    const baseZ = dustData.basePos[i * 3 + 2];
+                    const phase = dustData.phases[i];
+                    arr[i * 3]     = baseX + Math.sin(time * 0.12 + phase) * 1.5;
+                    arr[i * 3 + 1] = baseY + Math.cos(time * 0.1 + phase) * 1;
+                    arr[i * 3 + 2] = baseZ + Math.sin(time * 0.14 + phase) * 1.2;
+                }
+                posAttr.needsUpdate = true;
+            }
+
+            // 外晕漂移
+            if (haloParticles && haloData) {
+                const posAttr = haloParticles.geometry.attributes.position;
+                const arr = posAttr.array;
+                const n = haloData.basePos.length / 3;
+                for (let i = 0; i < n; i++) {
+                    const baseX = haloData.basePos[i * 3];
+                    const baseY = haloData.basePos[i * 3 + 1];
+                    const baseZ = haloData.basePos[i * 3 + 2];
+                    const phase = haloData.phases[i];
+                    arr[i * 3]     = baseX + Math.sin(time * 0.08 + phase) * 2;
+                    arr[i * 3 + 1] = baseY + Math.cos(time * 0.07 + phase) * 1.5;
+                    arr[i * 3 + 2] = baseZ + Math.sin(time * 0.09 + phase) * 2;
+                }
+                posAttr.needsUpdate = true;
+            }
+
+            // 星云组缓慢旋转
+            if (nebulaGroup) {
+                nebulaGroup.rotation.y += 0.0003;
+            }
+
+            if (bgStarfield) bgStarfield.rotation.y += 0.00005;
+
+            controls.update();
+            composer.render();
+        }
+
+        init();
+        animate();
+    </script>
+</body>
+</html>

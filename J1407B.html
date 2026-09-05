@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>J1407b · 超级土星</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Microsoft YaHei', '微软雅黑', 'PingFang SC', sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            cursor: grab;
+        }
+        body:active { cursor: grabbing; }
+
+        #canvas-container {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px; left: 20px;
+            z-index: 10;
+            color: rgba(255,255,255,0.8);
+            pointer-events: none;
+            user-select: none;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            text-transform: uppercase;
+            letter-spacing: 6px;
+            color: #d4b896;
+            text-shadow: 0 0 15px rgba(200,150,80,1), 0 0 40px rgba(160,120,60,0.6), 0 2px 0 rgba(0,0,0,0.8);
+            font-weight: 900;
+        }
+
+        .subtitle {
+            margin-top: 6px;
+            font-size: 0.9rem;
+            color: #c9a878;
+            letter-spacing: 3px;
+            text-shadow: 0 0 10px rgba(180,130,60,0.8);
+        }
+
+        .instruction {
+            margin-top: 12px;
+            font-size: 0.85rem;
+            background: rgba(25,15,5,0.75);
+            border: 1px solid rgba(180,140,80,0.4);
+            border-radius: 10px;
+            padding: 10px 14px;
+            border-radius: 8px;
+            border-left: 3px solid rgba(200,150,80,0.8);
+            color: rgba(230,210,180,0.75);
+            line-height: 1.8;
+            backdrop-filter: blur(4px);
+        }
+
+        .info {
+            margin-top: 12px;
+            font-size: 0.8rem;
+            background: rgba(25,15,5,0.75);
+            border: 1px solid rgba(180,140,80,0.3);
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: rgba(220,200,170,0.7);
+            line-height: 1.8;
+            backdrop-filter: blur(4px);
+        }
+
+        .info b {
+            color: #d4b080;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%,-50%);
+            color: rgba(220,190,150,0.9);
+            font-size: 20px;
+            z-index: 20;
+            text-align: center;
+        }
+    </style>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+
+    <div id="loading">正在凝聚星环...</div>
+
+    <div id="ui-layer">
+        <h1>J1407 b</h1>
+        <div class="subtitle">SUPER SATURN · 超级土星</div>
+        <div class="instruction">
+            🖱️ <b>拖拽</b>: 旋转视角<br>
+            🔍 <b>滚轮</b>: 缩放距离
+        </div>
+        <div class="info">
+            <b>类型</b>: 气态巨行星 / 褐矮星<br>
+            <b>距离</b>: 约 434 光年<br>
+            <b>环系</b>: 约为土星环 200 倍<br>
+            <b>环半径</b>: 约 0.6 AU
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // ==========================================
+        // 配置
+        // ==========================================
+        const CONFIG = {
+            planetRadius: 28,
+            // 多层环配置
+            rings: [
+                { innerR: 36,  outerR: 50,  density: 1.0, opacity: 0.9, color: 0xc9a878 },  // D环
+                { innerR: 50,  outerR: 75,  density: 1.2, opacity: 0.95, color: 0xd4b080 }, // C环
+                { innerR: 78,  outerR: 120, density: 1.5, opacity: 1.0, color: 0xddbc8a },  // B环 (最亮)
+                { innerR: 122, outerR: 160, density: 1.3, opacity: 0.9, color: 0xc9a878 },  // A环
+                { innerR: 165, outerR: 210, density: 1.0, opacity: 0.8, color: 0xb89868 },  // F/G环
+                { innerR: 220, outerR: 290, density: 0.7, opacity: 0.6, color: 0xa88858 },  // E环
+                { innerR: 300, outerR: 380, density: 0.4, opacity: 0.4, color: 0x987848 },  // 外环
+                { innerR: 390, outerR: 480, density: 0.2, opacity: 0.25, color: 0x886838 }, // 最外环
+            ],
+            ringParticleCount: 80000,
+            starCount: 4000,
+        };
+
+        let scene, camera, renderer, composer, controls;
+        let planetSurface, planetAtmosphere, planetGlow;
+        let ringSystem = []; // 多层环
+        let ringParticles;
+        let ringData = null;
+        let starfield;
+        let bloomPass;
+        let time = 0;
+
+        const loadingEl = document.getElementById('loading');
+
+        // ==========================================
+        // 粒子纹理
+        // ==========================================
+        function createParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+            g.addColorStop(0,   'rgba(255,255,255,1)');
+            g.addColorStop(0.2, 'rgba(255,255,255,0.8)');
+            g.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+            g.addColorStop(1,   'rgba(0,0,0,0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, 32, 32);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // ==========================================
+        // 行星表面纹理 — 棕褐色气态巨行星
+        // ==========================================
+        function createPlanetTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+
+            // 基础渐变 — 棕褐/赭石色气态巨行星
+            const grad = ctx.createLinearGradient(0, 0, 0, 256);
+            grad.addColorStop(0,    '#6b4a2a');
+            grad.addColorStop(0.2,  '#8b6540');
+            grad.addColorStop(0.4,  '#a07850');
+            grad.addColorStop(0.6,  '#957048');
+            grad.addColorStop(0.8,  '#7d5a38');
+            grad.addColorStop(1,    '#5e3f25');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 512, 256);
+
+            // 大气云带条纹
+            for (let band = 0; band < 12; band++) {
+                const y = (band / 12) * 256 + (Math.random() - 0.5) * 8;
+                const h = 8 + Math.random() * 15;
+                const baseLight = 35 + Math.random() * 20;
+                const hue = 25 + Math.random() * 15;
+                const sat = 30 + Math.random() * 20;
+                ctx.fillStyle = `hsla(${hue}, ${sat}%, ${baseLight}%, 0.5)`;
+                ctx.fillRect(0, y, 512, h);
+            }
+
+            // 颗粒噪点
+            for (let i = 0; i < 8000; i++) {
+                const x = Math.random() * 512;
+                const y = Math.random() * 256;
+                const size = Math.random() * 2 + 0.5;
+                const brightness = Math.random() * 0.3 + 0.15;
+                const hue = 25 + Math.random() * 20;
+                const sat = 25 + Math.random() * 20;
+                const light = 35 + Math.random() * 25;
+                ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${brightness})`;
+                ctx.beginPath();
+                ctx.arc(x, y, size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 大型风暴/涡旋
+            for (let i = 0; i < 6; i++) {
+                const x = Math.random() * 512;
+                const y = Math.random() * 256;
+                const rx = Math.random() * 45 + 15;
+                const ry = Math.random() * 20 + 8;
+                const alpha = Math.random() * 0.35 + 0.15;
+                const hue = 20 + Math.random() * 15;
+                const spotGrad = ctx.createRadialGradient(x, y, 0, x, y, rx);
+                spotGrad.addColorStop(0, `hsla(${hue}, 40%, 50%, ${alpha})`);
+                spotGrad.addColorStop(0.5, `hsla(${hue+5}, 35%, 40%, ${alpha*0.6})`);
+                spotGrad.addColorStop(1, `hsla(${hue+10}, 30%, 30%, 0)`);
+                ctx.fillStyle = spotGrad;
+                ctx.beginPath();
+                ctx.ellipse(x, y, rx, ry, Math.random() * 0.4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // ==========================================
+        // 初始化
+        // ==========================================
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000000, 0.0008);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 5000);
+            camera.position.set(0, 120, 450);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0;
+            container.appendChild(renderer.domElement);
+
+            // 鼠标控制
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.06;
+            controls.rotateSpeed = 0.6;
+            controls.zoomSpeed = 1.2;
+            controls.minDistance = 80;
+            controls.maxDistance = 2000;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.2;
+
+            // 后期处理 — 暖金色 Bloom
+            const renderPass = new RenderPass(scene, camera);
+            bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                1.8, 0.6, 0.0
+            );
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderPass);
+            composer.addPass(bloomPass);
+
+            const tex = createParticleTexture();
+
+            // 光源 — 暖金色反射光
+            const light = new THREE.PointLight(0xffcc88, 2, 2000);
+            scene.add(light);
+            const ambient = new THREE.AmbientLight(0x332211, 0.35);
+            scene.add(ambient);
+
+            // --- 行星表面 ---
+            const planetTex = createPlanetTexture();
+            planetSurface = new THREE.Mesh(
+                new THREE.SphereGeometry(CONFIG.planetRadius, 64, 64),
+                new THREE.MeshBasicMaterial({
+                    map: planetTex,
+                    color: 0xffffff
+                })
+            );
+            scene.add(planetSurface);
+
+            // 行星大气辉光
+            planetAtmosphere = new THREE.Mesh(
+                new THREE.SphereGeometry(CONFIG.planetRadius * 1.06, 64, 64),
+                new THREE.MeshBasicMaterial({
+                    color: 0xcc9966,
+                    transparent: true,
+                    opacity: 0.35,
+                    side: THREE.BackSide,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            scene.add(planetAtmosphere);
+
+            // 外层辉光
+            planetGlow = new THREE.Mesh(
+                new THREE.SphereGeometry(CONFIG.planetRadius * 1.18, 64, 64),
+                new THREE.MeshBasicMaterial({
+                    color: 0xaa7744,
+                    transparent: true,
+                    opacity: 0.18,
+                    side: THREE.BackSide,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            scene.add(planetGlow);
+
+            // --- 行星环粒子系统 ---
+            ringParticles = createRingSystem(tex);
+            scene.add(ringParticles);
+
+            // --- 环结构实体（半透明盘）---
+            createRingDisks();
+
+            // --- 星空背景 ---
+            starfield = createStarfield();
+            scene.add(starfield);
+
+            // 用户交互时暂停自动旋转
+            renderer.domElement.addEventListener('pointerdown', () => { controls.autoRotate = false; });
+
+            window.addEventListener('resize', onResize);
+
+            loadingEl.style.display = 'none';
+        }
+
+        // ==========================================
+        // 行星环粒子系统 — 多层环
+        // ==========================================
+        function createRingSystem(texture) {
+            const count = CONFIG.ringParticleCount;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+
+            ringData = {
+                baseAngles: new Float32Array(count),
+                radii:      new Float32Array(count),
+                baseYs:     new Float32Array(count),
+                orbitSpeeds:new Float32Array(count),
+                vertAmps:   new Float32Array(count),
+                vertFreqs:  new Float32Array(count),
+                vertPhases: new Float32Array(count),
+            };
+
+            // 计算每层环的粒子数分配
+            const totalDensity = CONFIG.rings.reduce((sum, r) => sum + r.density * (r.outerR - r.innerR), 0);
+
+            let particleIndex = 0;
+
+            CONFIG.rings.forEach((ring, ringIdx) => {
+                const ringParticleCount = Math.floor(count * (ring.density * (ring.outerR - ring.innerR)) / totalDensity);
+                const ringColor = new THREE.Color(ring.color);
+
+                for (let i = 0; i < ringParticleCount && particleIndex < count; i++) {
+                    const t = Math.random();
+                    const r = ring.innerR + (ring.outerR - ring.innerR) * t;
+                    const angle = Math.random() * Math.PI * 2;
+                    // 环很薄，但有微小厚度
+                    const thickness = (Math.random() - 0.5) * 0.8 * (1 + ringIdx * 0.15);
+                    const baseY = thickness;
+
+                    positions[particleIndex * 3]     = r * Math.cos(angle);
+                    positions[particleIndex * 3 + 1] = baseY;
+                    positions[particleIndex * 3 + 2] = r * Math.sin(angle);
+
+                    // 颜色基于环的颜色 + 径向变化 + 多普勒效应
+                    const normR = (r - ring.innerR) / (ring.outerR - ring.innerR);
+                    let cr = ringColor.r;
+                    let cg = ringColor.g;
+                    let cb = ringColor.b;
+
+                    // 内环更亮
+                    const brightness = ring.opacity * (0.8 + 0.4 * (1 - normR));
+
+                    // 多普勒增亮
+                    const dopplerBoost = 1.0 + 0.35 * Math.cos(angle);
+
+                    colors[particleIndex * 3]     = cr * brightness * dopplerBoost;
+                    colors[particleIndex * 3 + 1] = cg * brightness * dopplerBoost;
+                    colors[particleIndex * 3 + 2] = cb * brightness * dopplerBoost;
+
+                    // 动态参数
+                    ringData.baseAngles[particleIndex]  = angle;
+                    ringData.radii[particleIndex]       = r;
+                    ringData.baseYs[particleIndex]      = baseY;
+                    // 开普勒第三定律近似
+                    ringData.orbitSpeeds[particleIndex] = 0.04 * Math.pow(ring.innerR / r, 1.5);
+                    ringData.vertAmps[particleIndex]    = 0.1 + Math.random() * 0.3;
+                    ringData.vertFreqs[particleIndex]   = 0.3 + Math.random() * 1.0;
+                    ringData.vertPhases[particleIndex]  = Math.random() * Math.PI * 2;
+
+                    particleIndex++;
+                }
+            });
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 2.5, map: texture, vertexColors: true, transparent: true,
+                opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false,
+                sizeAttenuation: true
+            }));
+        }
+
+        // ==========================================
+        // 实体环盘 — 提供环的基础视觉结构
+        // ==========================================
+        function createRingDisks() {
+            CONFIG.rings.forEach((ring, idx) => {
+                const ringGeo = new THREE.RingGeometry(
+                    ring.innerR, ring.outerR, 256, 8
+                );
+
+                // 调整UV使纹理沿环径向分布
+                const pos = ringGeo.attributes.position;
+                const uvs = ringGeo.attributes.uv;
+                for (let i = 0; i < pos.count; i++) {
+                    const x = pos.getX(i);
+                    const y = pos.getY(i);
+                    const r = Math.sqrt(x * x + y * y);
+                    const normR = (r - ring.innerR) / (ring.outerR - ring.innerR);
+                    uvs.setXY(i, normR, 0.5);
+                }
+
+                // 创建环纹理
+                const canvas = document.createElement('canvas');
+                canvas.width = 256; canvas.height = 4;
+                const ctx = canvas.getContext('2d');
+
+                // 径向渐变 — 模拟环的密度变化
+                const grad = ctx.createLinearGradient(0, 0, 256, 0);
+                const baseColor = new THREE.Color(ring.color);
+
+                // 内环边缘
+                grad.addColorStop(0, `rgba(${baseColor.r*255*0.3}, ${baseColor.g*255*0.3}, ${baseColor.b*255*0.3}, 0)`);
+                grad.addColorStop(0.05, `rgba(${baseColor.r*255}, ${baseColor.g*255}, ${baseColor.b*255}, ${ring.opacity*0.6})`);
+
+                // 添加环内的明暗条纹（模拟土星环的结构）
+                for (let s = 0; s < 20; s++) {
+                    const pos = 0.1 + (s / 20) * 0.85;
+                    const alpha = ring.opacity * (0.5 + Math.random() * 0.5);
+                    const width = 0.01 + Math.random() * 0.03;
+                    grad.addColorStop(Math.max(0, pos - width/2),
+                        `rgba(${baseColor.r*255*(0.8+Math.random()*0.4)}, ${baseColor.g*255*(0.8+Math.random()*0.4)}, ${baseColor.b*255*(0.8+Math.random()*0.4)}, ${alpha})`);
+                    grad.addColorStop(pos,
+                        `rgba(${baseColor.r*255*(0.6+Math.random()*0.3)}, ${baseColor.g*255*(0.6+Math.random()*0.3)}, ${baseColor.b*255*(0.6+Math.random()*0.3)}, ${alpha*0.7})`);
+                    grad.addColorStop(Math.min(1, pos + width/2),
+                        `rgba(${baseColor.r*255*(0.8+Math.random()*0.4)}, ${baseColor.g*255*(0.8+Math.random()*0.4)}, ${baseColor.b*255*(0.8+Math.random()*0.4)}, ${alpha})`);
+                }
+
+                // 外环边缘淡出
+                grad.addColorStop(0.95, `rgba(${baseColor.r*255*0.8}, ${baseColor.g*255*0.8}, ${baseColor.b*255*0.8}, ${ring.opacity*0.4})`);
+                grad.addColorStop(1, `rgba(${baseColor.r*255*0.2}, ${baseColor.g*255*0.2}, ${baseColor.b*255*0.2}, 0)`);
+
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, 256, 4);
+
+                const ringTex = new THREE.CanvasTexture(canvas);
+                ringTex.wrapS = THREE.ClampToEdgeWrapping;
+
+                const ringMat = new THREE.MeshBasicMaterial({
+                    map: ringTex,
+                    transparent: true,
+                    opacity: ring.opacity * 0.5,
+                    side: THREE.DoubleSide,
+                    blending: THREE.AdditiveBlending,
+                    depthWrite: false
+                });
+
+                const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+                ringMesh.rotation.x = -Math.PI / 2; // 水平放置
+                scene.add(ringMesh);
+                ringSystem.push(ringMesh);
+            });
+        }
+
+        // ==========================================
+        // 星空背景
+        // ==========================================
+        function createStarfield() {
+            const geo = new THREE.BufferGeometry();
+            const positions = [];
+            const count = CONFIG.starCount;
+            for (let i = 0; i < count; i++) {
+                const r = 800 + Math.random() * 1500;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                positions.push(
+                    r * Math.sin(phi) * Math.cos(theta),
+                    r * Math.sin(phi) * Math.sin(theta),
+                    r * Math.cos(phi)
+                );
+            }
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                color: 0xffffff, size: 1.5, transparent: true,
+                opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false
+            }));
+        }
+
+        // ==========================================
+        // 窗口适配
+        // ==========================================
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // ==========================================
+        // 动画循环
+        // ==========================================
+        function animate() {
+            requestAnimationFrame(animate);
+            time += 0.005;
+
+            // 行星自转
+            if (planetSurface) {
+                planetSurface.rotation.y += 0.0015;
+            }
+
+            // 环粒子 — 逐粒子动态更新
+            if (ringParticles && ringData) {
+                const posAttr = ringParticles.geometry.attributes.position;
+                const arr = posAttr.array;
+                const n = ringData.baseAngles.length;
+                for (let i = 0; i < n; i++) {
+                    const idx = i * 3;
+                    const ang = ringData.baseAngles[i] + time * ringData.orbitSpeeds[i];
+                    const r   = ringData.radii[i];
+                    const y   = ringData.baseYs[i] + Math.sin(time * ringData.vertFreqs[i] + ringData.vertPhases[i]) * ringData.vertAmps[i];
+                    arr[idx]     = Math.cos(ang) * r;
+                    arr[idx + 1] = y;
+                    arr[idx + 2] = Math.sin(ang) * r;
+                }
+                posAttr.needsUpdate = true;
+            }
+
+            // 环整体缓慢旋转（差速效果由粒子运动实现）
+            ringSystem.forEach((ring, idx) => {
+                ring.rotation.z += 0.0001 * (1 + idx * 0.1);
+            });
+
+            // 星空缓慢旋转
+            if (starfield) starfield.rotation.y += 0.0002;
+
+            // 大气脉动
+            if (planetAtmosphere) {
+                const pulse = 1 + Math.sin(time * 1.5) * 0.015;
+                planetAtmosphere.scale.set(pulse, pulse, pulse);
+            }
+
+            // 外层辉光呼吸
+            if (planetGlow) {
+                const pulse = 1 + Math.sin(time) * 0.02;
+                planetGlow.scale.set(pulse, pulse, pulse);
+            }
+
+            controls.update();
+            composer.render();
+        }
+
+        // ==========================================
+        // 启动
+        // ==========================================
+        init();
+        animate();
+
+    </script>
+</body>
+</html>

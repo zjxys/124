@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HD 189733 b · 蓝色玻璃雨行星</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Microsoft YaHei', '微软雅黑', 'PingFang SC', sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            cursor: grab;
+        }
+        body:active { cursor: grabbing; }
+
+        #canvas-container {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px; left: 20px;
+            z-index: 10;
+            color: rgba(255,255,255,0.8);
+            pointer-events: none;
+            user-select: none;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            text-transform: uppercase;
+            letter-spacing: 6px;
+            color: #44aaff;
+            text-shadow: 0 0 18px rgba(60,160,255,1), 0 0 50px rgba(20,100,220,0.6), 0 2px 0 rgba(0,0,0,0.9);
+            font-weight: 900;
+        }
+
+        .subtitle {
+            margin-top: 6px;
+            font-size: 0.9rem;
+            color: #3388dd;
+            letter-spacing: 3px;
+            text-shadow: 0 0 12px rgba(40,120,220,0.9);
+        }
+
+        .instruction {
+            margin-top: 12px;
+            font-size: 0.85rem;
+            background: rgba(5,12,25,0.85);
+            border: 1px solid rgba(60,150,255,0.4);
+            border-radius: 10px;
+            padding: 10px 14px;
+            border-left: 3px solid rgba(70,160,255,0.9);
+            color: rgba(180,220,255,0.78);
+            line-height: 1.8;
+            backdrop-filter: blur(4px);
+        }
+
+        .info {
+            margin-top: 12px;
+            font-size: 0.8rem;
+            background: rgba(5,12,25,0.85);
+            border: 1px solid rgba(60,150,255,0.3);
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: rgba(170,210,255,0.72);
+            line-height: 1.8;
+            backdrop-filter: blur(4px);
+        }
+
+        .info b {
+            color: #66bbff;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%,-50%);
+            color: rgba(80,180,255,0.9);
+            font-size: 20px;
+            z-index: 20;
+            text-align: center;
+        }
+    </style>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+
+    <div id="loading">正在降落玻璃雨...</div>
+
+    <div id="ui-layer">
+        <h1>HD 189733 b</h1>
+        <div class="subtitle">THE BLUE PLANET · 蓝色热木星</div>
+        <div class="instruction">
+            🖱️ <b>拖拽</b>: 旋转视角<br>
+            🔍 <b>滚轮</b>: 缩放距离
+        </div>
+        <div class="info">
+            <b>类型</b>: 热木星（气态巨行星）<br>
+            <b>距离</b>: 约 65 光年<br>
+            <b>温度</b>: ~926°C（1,700°F）<br>
+            <b>质量</b>: 1.13 倍木星质量<br>
+            <b>特征</b>: 深蓝色大气 / 玻璃雨 / 8000km/h风
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // ==========================================
+        // 配置
+        // ==========================================
+        const CONFIG = {
+            planetRadius: 50,           // 行星本体
+            atmosphereInner: 55,        // 内层大气
+            atmosphereOuter: 62,        // 外层大气
+            hazeRadius: 72,             // 弥散雾霭
+            glassRainCount: 20000,      // 玻璃雨粒子
+            orbitParticleCount: 25000,  // 轨道粒子
+            starCount: 4000,
+        };
+
+        let scene, camera, renderer, composer, controls;
+        let planet, atmosphereInner, atmosphereOuter, haze;
+        let glassRain, glassRainData = null;
+        let orbitParticles, orbitData = null;
+        let starfield;
+        let bloomPass;
+        let time = 0;
+
+        const loadingEl = document.getElementById('loading');
+
+        // ==========================================
+        // 粒子纹理
+        // ==========================================
+        function createParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+            g.addColorStop(0,   'rgba(255,255,255,1)');
+            g.addColorStop(0.2, 'rgba(255,255,255,0.8)');
+            g.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+            g.addColorStop(1,   'rgba(0,0,0,0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, 32, 32);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // ==========================================
+        // 行星表面纹理 — 深蓝色气态巨行星 + 玻璃云带
+        // ==========================================
+        function createPlanetTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 1024; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+
+            // 基底：深钴蓝渐变
+            const grad = ctx.createLinearGradient(0, 0, 0, 512);
+            grad.addColorStop(0,    '#0a2055');
+            grad.addColorStop(0.12, '#1144aa');
+            grad.addColorStop(0.3,  '#1a55bb');
+            grad.addColorStop(0.5,  '#2266cc');
+            grad.addColorStop(0.7,  '#1a55bb');
+            grad.addColorStop(0.88, '#1144aa');
+            grad.addColorStop(1,    '#0a2055');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 1024, 512);
+
+            // 大气云带条纹（玻璃云 + 湍流带）
+            for (let band = 0; band < 18; band++) {
+                const y = (band / 18) * 512;
+                const h = 512 / 18;
+                const isLight = band % 2 === 0;
+                const baseAlpha = 0.15 + Math.random() * 0.2;
+
+                // 不规则边缘的条带
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                for (let x = 0; x <= 1024; x += 8) {
+                    const wobble = Math.sin(x * 0.02 + band * 1.5) * 4 + Math.sin(x * 0.05 + band) * 2;
+                    ctx.lineTo(x, y + wobble);
+                }
+                ctx.lineTo(1024, y + h);
+                for (let x = 1024; x >= 0; x -= 8) {
+                    const wobble = Math.sin(x * 0.02 + band * 1.5 + 0.5) * 4 + Math.sin(x * 0.05 + band + 1) * 2;
+                    ctx.lineTo(x, y + h + wobble);
+                }
+                ctx.closePath();
+
+                if (isLight) {
+                    ctx.fillStyle = `rgba(80,150,230,${baseAlpha})`;
+                } else {
+                    ctx.fillStyle = `rgba(10,30,80,${baseAlpha})`;
+                }
+                ctx.fill();
+            }
+
+            // 涡旋风暴（类似大红斑但蓝色版）
+            for (let i = 0; i < 5; i++) {
+                const x = Math.random() * 1024;
+                const y = 80 + Math.random() * 352;
+                const rx = Math.random() * 50 + 30;
+                const ry = rx * (0.4 + Math.random() * 0.3);
+                const rotation = Math.random() * 0.5;
+                const vGrad = ctx.createRadialGradient(x, y, 0, x, y, rx);
+                vGrad.addColorStop(0, 'rgba(150,200,255,0.35)');
+                vGrad.addColorStop(0.5, 'rgba(80,140,220,0.2)');
+                vGrad.addColorStop(1, 'rgba(40,90,180,0)');
+                ctx.fillStyle = vGrad;
+                ctx.beginPath();
+                ctx.ellipse(x, y, rx, ry, rotation, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 涡旋旋臂
+                ctx.strokeStyle = 'rgba(120,180,240,0.15)';
+                ctx.lineWidth = 2;
+                for (let arm = 0; arm < 3; arm++) {
+                    ctx.beginPath();
+                    for (let t = 0; t < Math.PI * 2; t += 0.1) {
+                        const ar = rx * (0.3 + t / (Math.PI * 2) * 0.7);
+                        const ay = y + Math.sin(t + arm * 2 + rotation) * ry * 0.5;
+                        const ax = x + Math.cos(t + arm * 2 + rotation) * ar;
+                        if (t === 0) ctx.moveTo(ax, ay);
+                        else ctx.lineTo(ax, ay);
+                    }
+                    ctx.stroke();
+                }
+            }
+
+            // 玻璃云亮斑（硅酸盐云散射蓝光）
+            for (let i = 0; i < 60; i++) {
+                const x = Math.random() * 1024;
+                const y = Math.random() * 512;
+                const rx = Math.random() * 20 + 8;
+                const gGrad = ctx.createRadialGradient(x, y, 0, x, y, rx);
+                gGrad.addColorStop(0, 'rgba(200,230,255,0.4)');
+                gGrad.addColorStop(0.5, 'rgba(120,170,230,0.2)');
+                gGrad.addColorStop(1, 'rgba(60,110,200,0)');
+                ctx.fillStyle = gGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, rx, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 细微颗粒
+            for (let i = 0; i < 10000; i++) {
+                const x = Math.random() * 1024;
+                const y = Math.random() * 512;
+                const size = Math.random() * 1.5 + 0.3;
+                const brightness = Math.random() * 0.18 + 0.04;
+                const hue = 200 + Math.random() * 25;
+                const sat = 60 + Math.random() * 30;
+                const light = 45 + Math.random() * 30;
+                ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${brightness})`;
+                ctx.beginPath();
+                ctx.arc(x, y, size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // ==========================================
+        // 初始化
+        // ==========================================
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000000, 0.0004);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 5000);
+            camera.position.set(0, 25, 220);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0;
+            container.appendChild(renderer.domElement);
+
+            // 鼠标控制
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.06;
+            controls.rotateSpeed = 0.6;
+            controls.zoomSpeed = 1.2;
+            controls.minDistance = 80;
+            controls.maxDistance = 1200;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.25;
+
+            // 后期处理 — Bloom
+            const renderPass = new RenderPass(scene, camera);
+            bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                2.0, 0.6, 0.0
+            );
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderPass);
+            composer.addPass(bloomPass);
+
+            const tex = createParticleTexture();
+
+            // 光源
+            const planetLight = new THREE.PointLight(0x4499ff, 2, 1000);
+            scene.add(planetLight);
+            const ambient = new THREE.AmbientLight(0x0a1525, 0.4);
+            scene.add(ambient);
+
+            // --- 行星表面 ---
+            const planetTex = createPlanetTexture();
+            planet = new THREE.Mesh(
+                new THREE.SphereGeometry(CONFIG.planetRadius, 96, 96),
+                new THREE.MeshBasicMaterial({
+                    map: planetTex,
+                    color: 0xffffff
+                })
+            );
+            scene.add(planet);
+
+            // --- 内层大气辉光 ---
+            atmosphereInner = new THREE.Mesh(
+                new THREE.SphereGeometry(CONFIG.atmosphereInner, 64, 64),
+                new THREE.MeshBasicMaterial({
+                    color: 0x3388dd,
+                    transparent: true,
+                    opacity: 0.3,
+                    side: THREE.BackSide,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            scene.add(atmosphereInner);
+
+            // --- 外层大气辉光 ---
+            atmosphereOuter = new THREE.Mesh(
+                new THREE.SphereGeometry(CONFIG.atmosphereOuter, 64, 64),
+                new THREE.MeshBasicMaterial({
+                    color: 0x4499ff,
+                    transparent: true,
+                    opacity: 0.15,
+                    side: THREE.BackSide,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            scene.add(atmosphereOuter);
+
+            // --- 弥散雾霭 ---
+            haze = new THREE.Mesh(
+                new THREE.SphereGeometry(CONFIG.hazeRadius, 64, 64),
+                new THREE.MeshBasicMaterial({
+                    color: 0x66aaff,
+                    transparent: true,
+                    opacity: 0.06,
+                    side: THREE.BackSide,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            scene.add(haze);
+
+            // --- 玻璃雨粒子 ---
+            glassRain = createGlassRain(tex);
+            scene.add(glassRain);
+
+            // --- 轨道粒子 ---
+            orbitParticles = createOrbitParticles(tex);
+            scene.add(orbitParticles);
+
+            // --- 星空背景 ---
+            starfield = createStarfield();
+            scene.add(starfield);
+
+            // 用户交互时暂停自动旋转
+            renderer.domElement.addEventListener('pointerdown', () => { controls.autoRotate = false; });
+
+            window.addEventListener('resize', onResize);
+
+            loadingEl.style.display = 'none';
+        }
+
+        // ==========================================
+        // 玻璃雨粒子 — 横向高速飞行的硅酸盐粒子
+        // ==========================================
+        function createGlassRain(texture) {
+            const count = CONFIG.glassRainCount;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+
+            glassRainData = {
+                baseAngles: new Float32Array(count),
+                latAngles: new Float32Array(count),
+                radii: new Float32Array(count),
+                speeds: new Float32Array(count),
+                phases: new Float32Array(count),
+                latBands: new Float32Array(count),  // 纬度条带
+            };
+
+            for (let i = 0; i < count; i++) {
+                // 分布在行星周围的球壳上
+                const angle = Math.random() * Math.PI * 2;
+                const lat = (Math.random() - 0.5) * Math.PI;  // -90° ~ +90°
+                const r = CONFIG.planetRadius + 2 + Math.random() * 12;
+
+                positions[i * 3]     = r * Math.cos(lat) * Math.cos(angle);
+                positions[i * 3 + 1] = r * Math.sin(lat);
+                positions[i * 3 + 2] = r * Math.cos(lat) * Math.sin(angle);
+
+                glassRainData.baseAngles[i] = angle;
+                glassRainData.latAngles[i] = lat;
+                glassRainData.radii[i] = r;
+                glassRainData.speeds[i] = 0.5 + Math.random() * 1.5;  // 高速
+                glassRainData.phases[i] = Math.random() * Math.PI * 2;
+                glassRainData.latBands[i] = Math.floor((lat + Math.PI/2) / (Math.PI / 12)); // 12个纬度条带
+
+                // 玻璃粒子颜色：浅蓝白色
+                const v = Math.random();
+                colors[i * 3]     = 0.6 + v * 0.4;
+                colors[i * 3 + 1] = 0.75 + v * 0.25;
+                colors[i * 3 + 2] = 0.9 + v * 0.1;
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 1.8, map: texture, vertexColors: true, transparent: true,
+                opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false,
+                sizeAttenuation: true
+            }));
+        }
+
+        // ==========================================
+        // 轨道粒子
+        // ==========================================
+        function createOrbitParticles(texture) {
+            const count = CONFIG.orbitParticleCount;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+
+            orbitData = {
+                semiMajors: new Float32Array(count),
+                semiMinors: new Float32Array(count),
+                inclinations: new Float32Array(count),
+                longitudes: new Float32Array(count),
+                baseAngles: new Float32Array(count),
+                speeds: new Float32Array(count),
+            };
+
+            for (let i = 0; i < count; i++) {
+                const a = 150 + Math.random() * 250;
+                const ecc = 0.08 + Math.random() * 0.3;
+                const b = a * (1 - ecc);
+                const inc = (Math.random() - 0.5) * 0.5;
+                const lon = Math.random() * Math.PI * 2;
+                const angle = Math.random() * Math.PI * 2;
+
+                orbitData.semiMajors[i] = a;
+                orbitData.semiMinors[i] = b;
+                orbitData.inclinations[i] = inc;
+                orbitData.longitudes[i] = lon;
+                orbitData.baseAngles[i] = angle;
+                orbitData.speeds[i] = 0.08 * Math.sqrt(150 / a) * 0.4;
+
+                const cosA = Math.cos(angle);
+                const sinA = Math.sin(angle);
+                let x = a * cosA;
+                let z = b * sinA;
+                let y = 0;
+                const cosI = Math.cos(inc);
+                const sinI = Math.sin(inc);
+                const ny = y * cosI - z * sinI;
+                const nz = y * sinI + z * cosI;
+                y = ny; z = nz;
+                const cosL = Math.cos(lon);
+                const sinL = Math.sin(lon);
+                const nx = x * cosL - z * sinL;
+                const nz2 = x * sinL + z * cosL;
+                x = nx; z = nz2;
+
+                positions[i * 3]     = x;
+                positions[i * 3 + 1] = y;
+                positions[i * 3 + 2] = z;
+
+                const t = Math.random();
+                colors[i * 3]     = 0.3 + t * 0.25;
+                colors[i * 3 + 1] = 0.45 + t * 0.25;
+                colors[i * 3 + 2] = 0.7 + t * 0.3;
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 2.0, map: texture, vertexColors: true, transparent: true,
+                opacity: 0.65, blending: THREE.AdditiveBlending, depthWrite: false,
+                sizeAttenuation: true
+            }));
+        }
+
+        // ==========================================
+        // 星空背景
+        // ==========================================
+        function createStarfield() {
+            const geo = new THREE.BufferGeometry();
+            const positions = [];
+            const count = CONFIG.starCount;
+            for (let i = 0; i < count; i++) {
+                const r = 800 + Math.random() * 1500;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                positions.push(
+                    r * Math.sin(phi) * Math.cos(theta),
+                    r * Math.sin(phi) * Math.sin(theta),
+                    r * Math.cos(phi)
+                );
+            }
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                color: 0xffffff, size: 1.5, transparent: true,
+                opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false
+            }));
+        }
+
+        // ==========================================
+        // 窗口适配
+        // ==========================================
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // ==========================================
+        // 动画循环
+        // ==========================================
+        function animate() {
+            requestAnimationFrame(animate);
+            time += 0.008;
+
+            // 行星自转
+            if (planet) {
+                planet.rotation.y += 0.005;
+            }
+
+            // 大气脉动
+            if (atmosphereInner) {
+                const pulse = 1 + Math.sin(time * 2) * 0.015;
+                atmosphereInner.scale.set(pulse, pulse, pulse);
+                atmosphereInner.material.opacity = 0.28 + Math.sin(time * 1.8) * 0.04;
+            }
+
+            if (atmosphereOuter) {
+                const pulse = 1 + Math.sin(time * 1.5) * 0.02;
+                atmosphereOuter.scale.set(pulse, pulse, pulse);
+                atmosphereOuter.material.opacity = 0.13 + Math.sin(time * 2.2) * 0.03;
+            }
+
+            if (haze) {
+                const pulse = 1 + Math.sin(time * 1.0) * 0.025;
+                haze.scale.set(pulse, pulse, pulse);
+            }
+
+            // 玻璃雨粒子运动 — 高速横向飞行（模拟8000km/h风）
+            if (glassRain && glassRainData) {
+                const posAttr = glassRain.geometry.attributes.position;
+                const arr = posAttr.array;
+                const n = glassRainData.baseAngles.length;
+
+                for (let i = 0; i < n; i++) {
+                    // 粒子沿纬度条带高速移动
+                    const band = glassRainData.latBands[i];
+                    const bandDirection = (band % 2 === 0) ? 1 : -1;  // 相邻条带反向（类似木星条纹）
+                    const angle = glassRainData.baseAngles[i] + time * glassRainData.speeds[i] * bandDirection * 0.3;
+                    const lat = glassRainData.latAngles[i] + Math.sin(time * 0.5 + glassRainData.phases[i]) * 0.02;
+                    const r = glassRainData.radii[i];
+
+                    arr[i * 3]     = r * Math.cos(lat) * Math.cos(angle);
+                    arr[i * 3 + 1] = r * Math.sin(lat);
+                    arr[i * 3 + 2] = r * Math.cos(lat) * Math.sin(angle);
+                }
+                posAttr.needsUpdate = true;
+            }
+
+            // 轨道粒子运动
+            if (orbitParticles && orbitData) {
+                const posAttr = orbitParticles.geometry.attributes.position;
+                const arr = posAttr.array;
+                const n = orbitData.semiMajors.length;
+
+                for (let i = 0; i < n; i++) {
+                    const ang = orbitData.baseAngles[i] + time * orbitData.speeds[i];
+                    const a = orbitData.semiMajors[i];
+                    const b = orbitData.semiMinors[i];
+                    const inc = orbitData.inclinations[i];
+                    const lon = orbitData.longitudes[i];
+
+                    const cosA = Math.cos(ang);
+                    const sinA = Math.sin(ang);
+                    let x = a * cosA;
+                    let z = b * sinA;
+                    let y = 0;
+
+                    const cosI = Math.cos(inc);
+                    const sinI = Math.sin(inc);
+                    const ny = y * cosI - z * sinI;
+                    const nz = y * sinI + z * cosI;
+                    y = ny; z = nz;
+
+                    const cosL = Math.cos(lon);
+                    const sinL = Math.sin(lon);
+                    const nx = x * cosL - z * sinL;
+                    const nz2 = x * sinL + z * cosL;
+                    x = nx; z = nz2;
+
+                    arr[i * 3]     = x;
+                    arr[i * 3 + 1] = y;
+                    arr[i * 3 + 2] = z;
+                }
+                posAttr.needsUpdate = true;
+            }
+
+            // 星空缓慢旋转
+            if (starfield) starfield.rotation.y += 0.0002;
+
+            controls.update();
+            composer.render();
+        }
+
+        // ==========================================
+        // 启动
+        // ==========================================
+        init();
+        animate();
+
+    </script>
+</body>
+</html>

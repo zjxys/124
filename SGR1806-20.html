@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SGR 1806-20 · 磁星</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Microsoft YaHei', '微软雅黑', 'PingFang SC', sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            cursor: grab;
+        }
+        body:active { cursor: grabbing; }
+
+        #canvas-container {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px; left: 20px;
+            z-index: 10;
+            color: rgba(255,255,255,0.8);
+            pointer-events: none;
+            user-select: none;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            text-transform: uppercase;
+            letter-spacing: 6px;
+            color: #88ddff;
+            text-shadow: 0 0 15px rgba(80,180,255,1), 0 0 40px rgba(60,120,220,0.6), 0 2px 0 rgba(0,0,0,0.8);
+            font-weight: 900;
+        }
+
+        .subtitle {
+            margin-top: 6px;
+            font-size: 0.9rem;
+            color: #66ccee;
+            letter-spacing: 3px;
+            text-shadow: 0 0 10px rgba(80,160,220,0.8);
+        }
+
+        .instruction {
+            margin-top: 12px;
+            font-size: 0.85rem;
+            background: rgba(5,15,30,0.75);
+            border: 1px solid rgba(80,160,220,0.4);
+            border-radius: 10px;
+            padding: 10px 14px;
+            border-radius: 8px;
+            border-left: 3px solid rgba(80,180,255,0.8);
+            color: rgba(180,220,255,0.75);
+            line-height: 1.8;
+            backdrop-filter: blur(4px);
+        }
+
+        .info {
+            margin-top: 12px;
+            font-size: 0.8rem;
+            background: rgba(5,15,30,0.75);
+            border: 1px solid rgba(80,160,220,0.3);
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: rgba(180,210,240,0.7);
+            line-height: 1.8;
+            backdrop-filter: blur(4px);
+        }
+
+        .info b {
+            color: #88ccee;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%,-50%);
+            color: rgba(180,220,255,0.9);
+            font-size: 20px;
+            z-index: 20;
+            text-align: center;
+        }
+    </style>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+
+    <div id="loading">正在激发磁场...</div>
+
+    <div id="ui-layer">
+        <h1>SGR 1806-20</h1>
+        <div class="subtitle">MAGNETAR · 磁星</div>
+        <div class="instruction">
+            🖱️ <b>拖拽</b>: 旋转视角<br>
+            🔍 <b>滚轮</b>: 缩放距离
+        </div>
+        <div class="info">
+            <b>类型</b>: 磁星 / 中子星<br>
+            <b>距离</b>: 约 50,000 光年<br>
+            <b>磁场</b>: ~10<sup>15</sup> 高斯 (已知最强)<br>
+            <b>吸积盘</b>: 环绕残骸物质环
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // ==========================================
+        // 配置
+        // ==========================================
+        const CONFIG = {
+            starRadius: 18,          // 中子星半径
+            innerGlowRadius: 22,
+            outerGlowRadius: 35,
+            magnetosphereRadius: 80,
+            magneticFieldLineCount: 60,
+            jetParticleCount: 20000,
+            magnetosphereParticleCount: 30000,
+            // 环系统配置
+            rings: [
+                { innerR: 35,  outerR: 55,  density: 1.5, opacity: 0.95, color: 0x88ccff },  // 内吸积环
+                { innerR: 58,  outerR: 90,  density: 1.3, opacity: 0.85, color: 0x66aadd },  // 主吸积盘
+                { innerR: 95,  outerR: 140, density: 1.0, opacity: 0.7,  color: 0x5599cc },  // 外盘
+                { innerR: 150, outerR: 210, density: 0.6, opacity: 0.5,  color: 0x4488bb },  // 扩展环
+                { innerR: 220, outerR: 300, density: 0.3, opacity: 0.3,  color: 0x3377aa },  // 外环残骸
+            ],
+            ringParticleCount: 60000,
+            starCount: 4000,
+        };
+
+        let scene, camera, renderer, composer, controls;
+        let neutronStar, innerGlow, outerGlow;
+        let magneticFieldLines = [];
+        let polarJets = [];
+        let magnetosphereParticles;
+        let magnetoData = null;
+        let ringDisks = [];
+        let ringParticles;
+        let ringData = null;
+        let starfield;
+        let bloomPass;
+        let time = 0;
+
+        const loadingEl = document.getElementById('loading');
+
+        // ==========================================
+        // 粒子纹理
+        // ==========================================
+        function createParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+            g.addColorStop(0,   'rgba(255,255,255,1)');
+            g.addColorStop(0.2, 'rgba(255,255,255,0.8)');
+            g.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+            g.addColorStop(1,   'rgba(0,0,0,0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, 32, 32);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // ==========================================
+        // 中子星表面纹理 — 蓝白色致密天体
+        // ==========================================
+        function createNeutronStarTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+
+            // 基础渐变 — 蓝白色炽热中子星
+            const grad = ctx.createLinearGradient(0, 0, 0, 256);
+            grad.addColorStop(0,    '#aaddff');
+            grad.addColorStop(0.2,  '#cceeff');
+            grad.addColorStop(0.4,  '#ddeeff');
+            grad.addColorStop(0.6,  '#cceeff');
+            grad.addColorStop(0.8,  '#bbddee');
+            grad.addColorStop(1,    '#99ccdd');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 512, 256);
+
+            // 高温热点（极区和磁轴附近更热更亮）
+            for (let i = 0; i < 20; i++) {
+                const x = Math.random() * 512;
+                const y = Math.random() * 256;
+                const rx = Math.random() * 40 + 20;
+                const ry = Math.random() * 30 + 15;
+                const alpha = Math.random() * 0.3 + 0.1;
+                const spotGrad = ctx.createRadialGradient(x, y, 0, x, y, rx);
+                spotGrad.addColorStop(0, `rgba(255,255,255,${alpha})`);
+                spotGrad.addColorStop(0.5, `rgba(200,240,255,${alpha*0.5})`);
+                spotGrad.addColorStop(1, 'rgba(150,200,255,0)');
+                ctx.fillStyle = spotGrad;
+                ctx.beginPath();
+                ctx.ellipse(x, y, rx, ry, Math.random() * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 细微颗粒噪点（表面起伏）
+            for (let i = 0; i < 6000; i++) {
+                const x = Math.random() * 512;
+                const y = Math.random() * 256;
+                const size = Math.random() * 1.5 + 0.3;
+                const brightness = Math.random() * 0.25 + 0.1;
+                const hue = 190 + Math.random() * 30;
+                const sat = 40 + Math.random() * 30;
+                const light = 70 + Math.random() * 25;
+                ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${brightness})`;
+                ctx.beginPath();
+                ctx.arc(x, y, size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 暗一些的"星震"裂纹区域
+            for (let i = 0; i < 8; i++) {
+                const x = Math.random() * 512;
+                const y = Math.random() * 256;
+                const length = Math.random() * 80 + 30;
+                const width = Math.random() * 3 + 1;
+                const angle = Math.random() * Math.PI;
+                const alpha = Math.random() * 0.2 + 0.08;
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(angle);
+                ctx.fillStyle = `rgba(80,140,180,${alpha})`;
+                ctx.fillRect(-length/2, -width/2, length, width);
+                ctx.restore();
+            }
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // ==========================================
+        // 初始化
+        // ==========================================
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000000, 0.0008);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 5000);
+            camera.position.set(0, 80, 380);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0;
+            container.appendChild(renderer.domElement);
+
+            // 鼠标控制
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.06;
+            controls.rotateSpeed = 0.6;
+            controls.zoomSpeed = 1.2;
+            controls.minDistance = 60;
+            controls.maxDistance = 2000;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.25;
+
+            // 后期处理 — 强Bloom (蓝白色)
+            const renderPass = new RenderPass(scene, camera);
+            bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                2.8, 0.6, 0.0
+            );
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderPass);
+            composer.addPass(bloomPass);
+
+            const tex = createParticleTexture();
+
+            // 光源 — 蓝白色强辐射
+            const light = new THREE.PointLight(0x88ccff, 4, 3000);
+            scene.add(light);
+            const ambient = new THREE.AmbientLight(0x112233, 0.25);
+            scene.add(ambient);
+
+            // --- 中子星本体 ---
+            const starTex = createNeutronStarTexture();
+            neutronStar = new THREE.Mesh(
+                new THREE.SphereGeometry(CONFIG.starRadius, 64, 64),
+                new THREE.MeshBasicMaterial({
+                    map: starTex,
+                    color: 0xffffff
+                })
+            );
+            scene.add(neutronStar);
+
+            // 内层辉光
+            innerGlow = new THREE.Mesh(
+                new THREE.SphereGeometry(CONFIG.innerGlowRadius, 64, 64),
+                new THREE.MeshBasicMaterial({
+                    color: 0x66ccff,
+                    transparent: true,
+                    opacity: 0.45,
+                    side: THREE.BackSide,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            scene.add(innerGlow);
+
+            // 外层辉光
+            outerGlow = new THREE.Mesh(
+                new THREE.SphereGeometry(CONFIG.outerGlowRadius, 64, 64),
+                new THREE.MeshBasicMaterial({
+                    color: 0x4488dd,
+                    transparent: true,
+                    opacity: 0.28,
+                    side: THREE.BackSide,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            scene.add(outerGlow);
+
+            // --- 环系统（吸积盘）---
+            createRingDisks();
+            ringParticles = createRingParticles(tex);
+            scene.add(ringParticles);
+
+            // --- 磁场线 ---
+            createMagneticFieldLines(tex);
+
+            // --- 极区辐射喷流 ---
+            createPolarJets(tex);
+
+            // --- 磁层粒子 ---
+            magnetosphereParticles = createMagnetosphere(tex);
+            scene.add(magnetosphereParticles);
+
+            // --- 星空背景 ---
+            starfield = createStarfield();
+            scene.add(starfield);
+
+            // 用户交互时暂停自动旋转
+            renderer.domElement.addEventListener('pointerdown', () => { controls.autoRotate = false; });
+
+            window.addEventListener('resize', onResize);
+
+            loadingEl.style.display = 'none';
+        }
+
+        // ==========================================
+        // 实体环盘 — 吸积盘结构
+        // ==========================================
+        function createRingDisks() {
+            CONFIG.rings.forEach((ring, idx) => {
+                const ringGeo = new THREE.RingGeometry(
+                    ring.innerR, ring.outerR, 256, 12
+                );
+
+                // 调整UV
+                const pos = ringGeo.attributes.position;
+                const uvs = ringGeo.attributes.uv;
+                for (let i = 0; i < pos.count; i++) {
+                    const x = pos.getX(i);
+                    const y = pos.getY(i);
+                    const r = Math.sqrt(x * x + y * y);
+                    const normR = (r - ring.innerR) / (ring.outerR - ring.innerR);
+                    uvs.setXY(i, normR, 0.5);
+                }
+
+                // 创建环纹理
+                const canvas = document.createElement('canvas');
+                canvas.width = 256; canvas.height = 4;
+                const ctx = canvas.getContext('2d');
+
+                const baseColor = new THREE.Color(ring.color);
+                const grad = ctx.createLinearGradient(0, 0, 256, 0);
+
+                // 内边缘淡入
+                grad.addColorStop(0, `rgba(${baseColor.r*255*0.2}, ${baseColor.g*255*0.3}, ${baseColor.b*255*0.5}, 0)`);
+                grad.addColorStop(0.08, `rgba(${baseColor.r*255}, ${baseColor.g*255}, ${baseColor.b*255}, ${ring.opacity*0.8})`);
+
+                // 环内明暗条纹
+                for (let s = 0; s < 25; s++) {
+                    const p = 0.1 + (s / 25) * 0.82;
+                    const alpha = ring.opacity * (0.5 + Math.random() * 0.5);
+                    const w = 0.008 + Math.random() * 0.025;
+                    const b = 0.7 + Math.random() * 0.5;
+                    grad.addColorStop(Math.max(0, p - w/2),
+                        `rgba(${baseColor.r*255*b}, ${baseColor.g*255*b}, ${baseColor.b*255*b}, ${alpha})`);
+                    grad.addColorStop(p,
+                        `rgba(${baseColor.r*255*b*0.8}, ${baseColor.g*255*b*0.8}, ${baseColor.b*255*b*0.9}, ${alpha*0.7})`);
+                    grad.addColorStop(Math.min(1, p + w/2),
+                        `rgba(${baseColor.r*255*b}, ${baseColor.g*255*b}, ${baseColor.b*255*b}, ${alpha})`);
+                }
+
+                // 外边缘淡出
+                grad.addColorStop(0.92, `rgba(${baseColor.r*255*0.7}, ${baseColor.g*255*0.75}, ${baseColor.b*255*0.85}, ${ring.opacity*0.4})`);
+                grad.addColorStop(1, `rgba(${baseColor.r*255*0.15}, ${baseColor.g*255*0.2}, ${baseColor.b*255*0.3}, 0)`);
+
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, 256, 4);
+
+                const ringTex = new THREE.CanvasTexture(canvas);
+                ringTex.wrapS = THREE.ClampToEdgeWrapping;
+
+                const ringMat = new THREE.MeshBasicMaterial({
+                    map: ringTex,
+                    transparent: true,
+                    opacity: ring.opacity * 0.6,
+                    side: THREE.DoubleSide,
+                    blending: THREE.AdditiveBlending,
+                    depthWrite: false
+                });
+
+                const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+                ringMesh.rotation.x = -Math.PI / 2;
+                scene.add(ringMesh);
+                ringDisks.push({ mesh: ringMesh, speed: 0.0005 * (1 + idx * 0.15) });
+            });
+        }
+
+        // ==========================================
+        // 环粒子系统 — 环绕星体的残骸粒子
+        // ==========================================
+        function createRingParticles(texture) {
+            const count = CONFIG.ringParticleCount;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+
+            ringData = {
+                baseAngles: new Float32Array(count),
+                radii:      new Float32Array(count),
+                baseYs:     new Float32Array(count),
+                orbitSpeeds:new Float32Array(count),
+                vertAmps:   new Float32Array(count),
+                vertFreqs:  new Float32Array(count),
+                vertPhases: new Float32Array(count),
+            };
+
+            const totalDensity = CONFIG.rings.reduce((sum, r) => sum + r.density * (r.outerR - r.innerR), 0);
+            let particleIndex = 0;
+
+            CONFIG.rings.forEach((ring, ringIdx) => {
+                const ringCount = Math.floor(count * (ring.density * (ring.outerR - ring.innerR)) / totalDensity);
+                const ringColor = new THREE.Color(ring.color);
+
+                for (let i = 0; i < ringCount && particleIndex < count; i++) {
+                    const t = Math.random();
+                    const r = ring.innerR + (ring.outerR - ring.innerR) * t;
+                    const angle = Math.random() * Math.PI * 2;
+                    const thickness = (Math.random() - 0.5) * (1.2 + ringIdx * 0.3);
+                    const baseY = thickness;
+
+                    positions[particleIndex * 3]     = r * Math.cos(angle);
+                    positions[particleIndex * 3 + 1] = baseY;
+                    positions[particleIndex * 3 + 2] = r * Math.sin(angle);
+
+                    const normR = (r - ring.innerR) / (ring.outerR - ring.innerR);
+                    let cr = ringColor.r;
+                    let cg = ringColor.g;
+                    let cb = ringColor.b;
+
+                    const brightness = ring.opacity * (0.8 + 0.4 * (1 - normR));
+                    const dopplerBoost = 1.0 + 0.4 * Math.cos(angle);
+
+                    colors[particleIndex * 3]     = cr * brightness * dopplerBoost;
+                    colors[particleIndex * 3 + 1] = cg * brightness * dopplerBoost;
+                    colors[particleIndex * 3 + 2] = cb * brightness * dopplerBoost;
+
+                    ringData.baseAngles[particleIndex]  = angle;
+                    ringData.radii[particleIndex]       = r;
+                    ringData.baseYs[particleIndex]      = baseY;
+                    ringData.orbitSpeeds[particleIndex] = 0.05 * Math.pow(ring.innerR / r, 1.5);
+                    ringData.vertAmps[particleIndex]    = 0.15 + Math.random() * 0.4;
+                    ringData.vertFreqs[particleIndex]   = 0.2 + Math.random() * 0.8;
+                    ringData.vertPhases[particleIndex]  = Math.random() * Math.PI * 2;
+
+                    particleIndex++;
+                }
+            });
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 2.2, map: texture, vertexColors: true, transparent: true,
+                opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false,
+                sizeAttenuation: true
+            }));
+        }
+
+        // ==========================================
+        // 磁场线 — 偶极磁场结构
+        // ==========================================
+        function createMagneticFieldLines(texture) {
+            const lineCount = CONFIG.magneticFieldLineCount;
+
+            for (let i = 0; i < lineCount; i++) {
+                const curvePoints = [];
+                const phi = (i / lineCount) * Math.PI * 2;
+                const tiltAngle = (Math.random() - 0.5) * 0.3;
+
+                const steps = 80;
+                const maxRadius = CONFIG.magnetosphereRadius * (0.4 + Math.random() * 0.6);
+                const colatitude = 0.1 + Math.random() * 0.3;
+
+                for (let s = 0; s <= steps; s++) {
+                    const t = s / steps;
+                    const theta = colatitude + t * (Math.PI - 2 * colatitude);
+                    const r = maxRadius * Math.sin(theta) * Math.sin(theta) + CONFIG.starRadius * 1.1;
+
+                    let x = r * Math.sin(theta) * Math.cos(phi + tiltAngle);
+                    let y = r * Math.cos(theta);
+                    let z = r * Math.sin(theta) * Math.sin(phi + tiltAngle);
+
+                    curvePoints.push(new THREE.Vector3(x, y, z));
+                }
+
+                const curve = new THREE.CatmullRomCurve3(curvePoints);
+                const tubeGeo = new THREE.TubeGeometry(curve, 50, 0.3 + Math.random() * 0.4, 8, false);
+
+                const colors = new Float32Array(tubeGeo.attributes.position.count * 3);
+                const positions = tubeGeo.attributes.position;
+                for (let p = 0; p < positions.count; p++) {
+                    const pt = new THREE.Vector3(
+                        positions.getX(p),
+                        positions.getY(p),
+                        positions.getZ(p)
+                    );
+                    const dist = pt.length();
+                    const normD = (dist - CONFIG.starRadius) / (maxRadius - CONFIG.starRadius);
+                    const intensity = 1.0 - normD * 0.6;
+                    colors[p * 3]     = 0.7 * intensity;
+                    colors[p * 3 + 1] = 0.9 * intensity;
+                    colors[p * 3 + 2] = 1.0 * intensity;
+                }
+                tubeGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+                const tubeMat = new THREE.MeshBasicMaterial({
+                    vertexColors: true,
+                    transparent: true,
+                    opacity: 0.5 + Math.random() * 0.3,
+                    blending: THREE.AdditiveBlending,
+                    depthWrite: false
+                });
+
+                const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
+                scene.add(tubeMesh);
+                magneticFieldLines.push({ mesh: tubeMesh, curve, speed: 0.3 + Math.random() * 0.5 });
+            }
+        }
+
+        // ==========================================
+        // 极区辐射喷流
+        // ==========================================
+        function createPolarJets(texture) {
+            createJet(texture, 1);
+            createJet(texture, -1);
+        }
+
+        function createJet(texture, direction) {
+            const count = CONFIG.jetParticleCount;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+            const params = [];
+
+            for (let i = 0; i < count; i++) {
+                const startRadius = CONFIG.starRadius * 1.1;
+                const angle = Math.random() * Math.PI * 2;
+                const spread = (Math.random() - 0.5) * 0.15;
+
+                const startY = startRadius * direction;
+                const startX = Math.sin(spread) * startRadius * Math.cos(angle);
+                const startZ = Math.sin(spread) * startRadius * Math.sin(angle);
+
+                positions[i * 3]     = startX;
+                positions[i * 3 + 1] = startY;
+                positions[i * 3 + 2] = startZ;
+
+                const distFromAxis = Math.sqrt(startX * startX + startZ * startZ);
+                const normSpread = distFromAxis / (startRadius * 0.15);
+                const intensity = 1.0 - normSpread * 0.7;
+                colors[i * 3]     = 0.9 * intensity;
+                colors[i * 3 + 1] = 0.95 * intensity;
+                colors[i * 3 + 2] = 1.0 * intensity;
+
+                params.push({
+                    angle,
+                    spread,
+                    speed: 0.5 + Math.random() * 1.5,
+                    maxDist: 150 + Math.random() * 200,
+                    phase: Math.random() * Math.PI * 2
+                });
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const jet = new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 2.5, map: texture, vertexColors: true, transparent: true,
+                opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false,
+                sizeAttenuation: true
+            }));
+
+            scene.add(jet);
+            polarJets.push({ mesh: jet, positions, params, direction });
+        }
+
+        // ==========================================
+        // 磁层粒子
+        // ==========================================
+        function createMagnetosphere(texture) {
+            const count = CONFIG.magnetosphereParticleCount;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+
+            magnetoData = {
+                angles: new Float32Array(count),
+                radii: new Float32Array(count),
+                thetas: new Float32Array(count),
+                speeds: new Float32Array(count),
+                bobFreqs: new Float32Array(count),
+                bobPhases: new Float32Array(count),
+            };
+
+            for (let i = 0; i < count; i++) {
+                const r = CONFIG.starRadius * 1.5 + Math.pow(Math.random(), 0.6) * (CONFIG.magnetosphereRadius - CONFIG.starRadius * 1.5);
+                const theta = Math.random() * Math.PI;
+                const phi = Math.random() * Math.PI * 2;
+
+                positions[i * 3]     = r * Math.sin(theta) * Math.cos(phi);
+                positions[i * 3 + 1] = r * Math.cos(theta);
+                positions[i * 3 + 2] = r * Math.sin(theta) * Math.sin(phi);
+
+                const equatorialFactor = Math.sin(theta);
+                const intensity = 0.4 + equatorialFactor * 0.6;
+
+                colors[i * 3]     = 0.5 * intensity;
+                colors[i * 3 + 1] = 0.7 * intensity;
+                colors[i * 3 + 2] = 1.0 * intensity;
+
+                magnetoData.angles[i] = phi;
+                magnetoData.radii[i] = r;
+                magnetoData.thetas[i] = theta;
+                magnetoData.speeds[i] = 0.02 * (0.5 + equatorialFactor) * Math.pow(CONFIG.starRadius / r, 1.2);
+                magnetoData.bobFreqs[i] = 0.3 + Math.random() * 0.8;
+                magnetoData.bobPhases[i] = Math.random() * Math.PI * 2;
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 2, map: texture, vertexColors: true, transparent: true,
+                opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false,
+                sizeAttenuation: true
+            }));
+        }
+
+        // ==========================================
+        // 星空背景
+        // ==========================================
+        function createStarfield() {
+            const geo = new THREE.BufferGeometry();
+            const positions = [];
+            const count = CONFIG.starCount;
+            for (let i = 0; i < count; i++) {
+                const r = 800 + Math.random() * 1500;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                positions.push(
+                    r * Math.sin(phi) * Math.cos(theta),
+                    r * Math.sin(phi) * Math.sin(theta),
+                    r * Math.cos(phi)
+                );
+            }
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                color: 0xffffff, size: 1.5, transparent: true,
+                opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false
+            }));
+        }
+
+        // ==========================================
+        // 窗口适配
+        // ==========================================
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // ==========================================
+        // 动画循环
+        // ==========================================
+        function animate() {
+            requestAnimationFrame(animate);
+            time += 0.008;
+
+            // 中子星快速自转
+            if (neutronStar) {
+                neutronStar.rotation.y += 0.008;
+            }
+
+            // 内层辉光脉动
+            if (innerGlow) {
+                const pulse = 1 + Math.sin(time * 3) * 0.03;
+                innerGlow.scale.set(pulse, pulse, pulse);
+                innerGlow.material.opacity = 0.42 + Math.sin(time * 2.5) * 0.06;
+            }
+
+            // 外层辉光呼吸
+            if (outerGlow) {
+                const pulse = 1 + Math.sin(time * 1.5) * 0.04;
+                outerGlow.scale.set(pulse, pulse, pulse);
+                outerGlow.material.opacity = 0.25 + Math.sin(time * 2) * 0.05;
+            }
+
+            // 环盘差速旋转
+            ringDisks.forEach(ring => {
+                ring.mesh.rotation.z += ring.speed;
+            });
+
+            // 环粒子运动
+            if (ringParticles && ringData) {
+                const posAttr = ringParticles.geometry.attributes.position;
+                const arr = posAttr.array;
+                const n = ringData.baseAngles.length;
+                for (let i = 0; i < n; i++) {
+                    const idx = i * 3;
+                    const ang = ringData.baseAngles[i] + time * ringData.orbitSpeeds[i];
+                    const r   = ringData.radii[i];
+                    const y   = ringData.baseYs[i] + Math.sin(time * ringData.vertFreqs[i] + ringData.vertPhases[i]) * ringData.vertAmps[i];
+                    arr[idx]     = Math.cos(ang) * r;
+                    arr[idx + 1] = y;
+                    arr[idx + 2] = Math.sin(ang) * r;
+                }
+                posAttr.needsUpdate = true;
+            }
+
+            // 磁场线缓慢扭转
+            magneticFieldLines.forEach((line, idx) => {
+                line.mesh.rotation.y += 0.001 * (idx % 2 === 0 ? 1 : -1);
+            });
+
+            // 极区喷流粒子运动
+            polarJets.forEach(jet => {
+                const pos = jet.positions;
+                const params = jet.params;
+                const dir = jet.direction;
+                const n = params.length;
+                for (let i = 0; i < n; i++) {
+                    const p = params[i];
+                    const progress = ((time * p.speed + p.phase) % 1.0);
+                    const dist = CONFIG.starRadius * 1.1 + progress * p.maxDist;
+
+                    const spreadFactor = progress * 0.4;
+                    const xSpread = Math.sin(p.spread + spreadFactor * (Math.random() - 0.5) * 0.5) * dist;
+                    const zSpread = Math.sin(p.spread * 0.7 + spreadFactor * (Math.random() - 0.5) * 0.3) * dist;
+
+                    pos[i * 3]     = xSpread * Math.cos(p.angle);
+                    pos[i * 3 + 1] = dist * dir;
+                    pos[i * 3 + 2] = zSpread * Math.sin(p.angle);
+                }
+                jet.mesh.geometry.attributes.position.needsUpdate = true;
+            });
+
+            // 磁层粒子运动
+            if (magnetosphereParticles && magnetoData) {
+                const posAttr = magnetosphereParticles.geometry.attributes.position;
+                const arr = posAttr.array;
+                const n = magnetoData.angles.length;
+                for (let i = 0; i < n; i++) {
+                    const idx = i * 3;
+                    const angle = magnetoData.angles[i] + time * magnetoData.speeds[i];
+                    const r = magnetoData.radii[i];
+                    const theta = magnetoData.thetas[i] + Math.sin(time * magnetoData.bobFreqs[i] + magnetoData.bobPhases[i]) * 0.02;
+
+                    arr[idx]     = r * Math.sin(theta) * Math.cos(angle);
+                    arr[idx + 1] = r * Math.cos(theta);
+                    arr[idx + 2] = r * Math.sin(theta) * Math.sin(angle);
+                }
+                posAttr.needsUpdate = true;
+            }
+
+            // 星空缓慢旋转
+            if (starfield) starfield.rotation.y += 0.0002;
+
+            controls.update();
+            composer.render();
+        }
+
+        // ==========================================
+        // 启动
+        // ==========================================
+        init();
+        animate();
+
+    </script>
+</body>
+</html>
