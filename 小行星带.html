@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小行星带 · Asteroid Belt</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Microsoft YaHei', '微软雅黑', 'PingFang SC', sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            cursor: grab;
+        }
+        body:active { cursor: grabbing; }
+
+        #canvas-container {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px; left: 20px;
+            z-index: 10;
+            color: rgba(255,255,255,0.8);
+            pointer-events: none;
+            user-select: none;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            text-transform: uppercase;
+            letter-spacing: 6px;
+            color: #cc9966;
+            text-shadow: 0 0 18px rgba(150,100,50,1), 0 0 50px rgba(100,60,30,0.5), 0 2px 0 rgba(0,0,0,0.9);
+            font-weight: 900;
+        }
+
+        .subtitle {
+            margin-top: 6px;
+            font-size: 0.9rem;
+            color: #aa7744;
+            letter-spacing: 3px;
+            text-shadow: 0 0 12px rgba(120,80,40,0.9);
+        }
+
+        .instruction {
+            margin-top: 12px;
+            font-size: 0.85rem;
+            background: rgba(12,8,5,0.85);
+            border: 1px solid rgba(180,120,60,0.4);
+            border-radius: 10px;
+            padding: 10px 14px;
+            border-left: 3px solid rgba(200,140,70,0.9);
+            color: rgba(230,200,170,0.78);
+            line-height: 1.8;
+            backdrop-filter: blur(4px);
+        }
+
+        .info {
+            margin-top: 12px;
+            font-size: 0.8rem;
+            background: rgba(12,8,5,0.85);
+            border: 1px solid rgba(180,120,60,0.3);
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: rgba(220,190,160,0.72);
+            line-height: 1.8;
+            backdrop-filter: blur(4px);
+        }
+
+        .info b {
+            color: #ddaa77;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%,-50%);
+            color: rgba(180,120,60,0.9);
+            font-size: 20px;
+            z-index: 20;
+            text-align: center;
+        }
+    </style>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+
+    <div id="loading">正在部署小行星带...</div>
+
+    <div id="ui-layer">
+        <h1>Asteroid Belt</h1>
+        <div class="subtitle">主小行星带 · 岩石残骸带</div>
+        <div class="instruction">
+            🖱️ <b>拖拽</b>: 旋转视角<br>
+            🔍 <b>滚轮</b>: 缩放距离
+        </div>
+        <div class="info">
+            <b>位置</b>: 火星与木星轨道之间<br>
+            <b>范围</b>: 2.2 ~ 3.2 AU<br>
+            <b>3D岩石数</b>: ~5,336 颗<br>
+            <b>总质量</b>: ~4% 月球质量<br>
+            <b>最大天体</b>: 谷神星 / 灶神星 / 智神星
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        const CONFIG = {
+            // 主小行星带范围
+            beltInner: 50,
+            beltOuter: 130,
+            // 巨型岩石（3D网格）
+            giantRocksCount: 120,
+            // 大型岩石（3D网格）
+            bigRocksCount: 400,
+            // 中型岩石（3D网格）
+            mediumRocksCount: 800,
+            // 中小型岩石（3D网格）
+            midSmallRocksCount: 1500,
+            // 小型岩石（3D网格）
+            smallRocksCount: 2500,
+            // 大型小行星（3D网格）
+            largeAsteroids: [
+                { name: '谷神星 Ceres',    distance: 85,  radius: 2.5, color: 0xaaaaaa, angle: 0.2 },
+                { name: '灶神星 Vesta',    distance: 78,  radius: 2.0, color: 0xccaa77, angle: 1.3 },
+                { name: '智神星 Pallas',   distance: 95,  radius: 1.8, color: 0xbb9988, angle: 2.5 },
+                { name: '健神星 Hygiea',   distance: 88,  radius: 1.5, color: 0x998877, angle: 3.7 },
+                { name: '婚神星 Juno',     distance: 72,  radius: 1.3, color: 0xaa8866, angle: 4.8 },
+                { name: '义神星 Astraea',  distance: 82,  radius: 1.2, color: 0xbb9977, angle: 5.5 },
+                { name: '海女星 Hebe',     distance: 68,  radius: 1.1, color: 0xccaa88, angle: 0.8 },
+                { name: '虹神星 Iris',     distance: 76,  radius: 1.0, color: 0xaaaacc, angle: 2.0 },
+                { name: '司法星 Eunomia',  distance: 92,  radius: 1.0, color: 0xaa8877, angle: 3.2 },
+                { name: '流明星 Psyche',   distance: 100, radius: 0.9, color: 0x997755, angle: 4.5 },
+                { name: '颖神星 Metis',    distance: 65,  radius: 0.85, color: 0xbbaa88, angle: 5.8 },
+                { name: '司宁星 Themis',   distance: 105, radius: 0.85, color: 0x8899aa, angle: 1.7 },
+                { name: '导神星 Adeona',   distance: 98,  radius: 0.8, color: 0x998877, angle: 0.5 },
+                { name: '林神星 Sylvia',   distance: 110, radius: 0.8, color: 0x777766, angle: 2.8 },
+                { name: '春神星 Feronia',  distance: 108, radius: 0.75, color: 0x887766, angle: 4.0 },
+                { name: '明神星 Leto',     distance: 70,  radius: 0.7, color: 0xaaaa99, angle: 5.2 },
+            ],
+        };
+
+        let scene, camera, renderer, composer, controls;
+        let largeAsteroidMeshes = [];
+        let rockMeshes = [];  // 所有3D岩石小行星
+        let bgStarfield;
+        let bloomPass;
+        let time = 0;
+
+        const loadingEl = document.getElementById('loading');
+
+        function createParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 16; canvas.height = 16;
+            const ctx = canvas.getContext('2d');
+            const g = ctx.createRadialGradient(8, 8, 0, 8, 8, 8);
+            g.addColorStop(0, 'rgba(255,255,255,1)');
+            g.addColorStop(0.4, 'rgba(255,255,255,0.5)');
+            g.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, 16, 16);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // 生成不规则小行星形状
+        function createAsteroidMesh(radius, color, irregularity = 0.3) {
+            const geo = new THREE.IcosahedronGeometry(radius, 1);
+            const positions = geo.attributes.position;
+            for (let i = 0; i < positions.count; i++) {
+                const x = positions.getX(i);
+                const y = positions.getY(i);
+                const z = positions.getZ(i);
+                const noise = 1 + (Math.random() - 0.5) * irregularity;
+                positions.setXYZ(i, x * noise, y * noise, z * noise);
+            }
+            geo.computeVertexNormals();
+
+            const mat = new THREE.MeshStandardMaterial({
+                color: color,
+                flatShading: true,
+                roughness: 0.9,
+                metalness: 0.1,
+            });
+            return new THREE.Mesh(geo, mat);
+        }
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000000, 0.0012);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 2000);
+            camera.position.set(0, 80, 160);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.06;
+            controls.rotateSpeed = 0.6;
+            controls.zoomSpeed = 1.2;
+            controls.minDistance = 20;
+            controls.maxDistance = 600;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.3;
+
+            const renderPass = new RenderPass(scene, camera);
+            bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                0.5, 0.5, 0.2
+            );
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderPass);
+            composer.addPass(bloomPass);
+
+            const tex = createParticleTexture();
+
+            // 光源
+            const sunLight = new THREE.DirectionalLight(0xffeedd, 1.5);
+            sunLight.position.set(1, 0.3, 0.5).normalize();
+            scene.add(sunLight);
+
+            const rimLight = new THREE.DirectionalLight(0x8899bb, 0.6);
+            rimLight.position.set(-1, -0.2, -0.5).normalize();
+            scene.add(rimLight);
+
+            const ambient = new THREE.AmbientLight(0x222233, 0.4);
+            scene.add(ambient);
+
+            // === 主小行星带（全部为 3D 岩石）===
+
+            // === 大型小行星（3D 网格）===
+            for (const aDef of CONFIG.largeAsteroids) {
+                const ast = createAsteroidMesh(aDef.radius, aDef.color, 0.25 + Math.random() * 0.15);
+                const dist = aDef.distance + (Math.random() - 0.5) * 5;
+                ast.position.set(Math.cos(aDef.angle) * dist, 0, Math.sin(aDef.angle) * dist);
+                ast.userData = {
+                    distance: dist,
+                    speed: 0.004 / Math.pow(dist / 90, 1.5),
+                    angle: aDef.angle,
+                    rotSpeed: 0.01 + Math.random() * 0.025,
+                    rotAxis: new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).normalize(),
+                    name: aDef.name,
+                };
+                scene.add(ast);
+                largeAsteroidMeshes.push(ast);
+            }
+
+            // === 巨型岩石小行星（3D 网格）===
+            for (let i = 0; i < CONFIG.giantRocksCount; i++) {
+                const r = CONFIG.beltInner + 10 + Math.random() * (CONFIG.beltOuter - CONFIG.beltInner - 20);
+                const angle = Math.random() * Math.PI * 2;
+                const yOff = (Math.random() - 0.5) * 5;
+                const radius = 1.2 + Math.random() * 1.8;
+
+                const colorType = Math.random();
+                let color;
+                if (colorType < 0.3) color = 0x887766;
+                else if (colorType < 0.55) color = 0xaa9977;
+                else if (colorType < 0.75) color = 0x998877;
+                else if (colorType < 0.9) color = 0x776655;
+                else color = 0x665544;
+
+                const rock = createAsteroidMesh(radius, color, 0.25 + Math.random() * 0.2);
+                rock.position.set(Math.cos(angle) * r, yOff, Math.sin(angle) * r);
+                rock.userData = {
+                    distance: r,
+                    speed: 0.004 / Math.pow(r / 90, 1.5),
+                    angle: angle,
+                    rotSpeed: 0.008 + Math.random() * 0.02,
+                    rotAxis: new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).normalize(),
+                    yOffset: yOff,
+                };
+                scene.add(rock);
+                rockMeshes.push(rock);
+            }
+
+            // === 大型岩石小行星（3D 网格）===
+            for (let i = 0; i < CONFIG.bigRocksCount; i++) {
+                const r = CONFIG.beltInner + 8 + Math.random() * (CONFIG.beltOuter - CONFIG.beltInner - 16);
+                const angle = Math.random() * Math.PI * 2;
+                const yOff = (Math.random() - 0.5) * 5.5;
+                const radius = 0.7 + Math.random() * 0.6;
+
+                const colorType = Math.random();
+                let color;
+                if (colorType < 0.3) color = 0x887766;
+                else if (colorType < 0.6) color = 0x998877;
+                else if (colorType < 0.8) color = 0x776655;
+                else color = 0x665544;
+
+                const rock = createAsteroidMesh(radius, color, 0.28 + Math.random() * 0.2);
+                rock.position.set(Math.cos(angle) * r, yOff, Math.sin(angle) * r);
+                rock.userData = {
+                    distance: r,
+                    speed: 0.004 / Math.pow(r / 90, 1.5),
+                    angle: angle,
+                    rotSpeed: 0.01 + Math.random() * 0.025,
+                    rotAxis: new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).normalize(),
+                    yOffset: yOff,
+                };
+                scene.add(rock);
+                rockMeshes.push(rock);
+            }
+
+            // === 中型岩石小行星（3D 网格）===
+            for (let i = 0; i < CONFIG.mediumRocksCount; i++) {
+                const r = CONFIG.beltInner + 8 + Math.random() * (CONFIG.beltOuter - CONFIG.beltInner - 16);
+                const angle = Math.random() * Math.PI * 2;
+                const yOff = (Math.random() - 0.5) * 6;
+                const radius = 0.4 + Math.random() * 0.5;
+
+                const colorType = Math.random();
+                let color;
+                if (colorType < 0.35) color = 0x776655;
+                else if (colorType < 0.65) color = 0x998877;
+                else if (colorType < 0.85) color = 0x887766;
+                else color = 0x665544;
+
+                const rock = createAsteroidMesh(radius, color, 0.3 + Math.random() * 0.2);
+                rock.position.set(Math.cos(angle) * r, yOff, Math.sin(angle) * r);
+                rock.userData = {
+                    distance: r,
+                    speed: 0.004 / Math.pow(r / 90, 1.5),
+                    angle: angle,
+                    rotSpeed: 0.015 + Math.random() * 0.035,
+                    rotAxis: new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).normalize(),
+                    yOffset: yOff,
+                };
+                scene.add(rock);
+                rockMeshes.push(rock);
+            }
+
+            // === 中小型岩石（3D 网格）===
+            for (let i = 0; i < CONFIG.midSmallRocksCount; i++) {
+                const r = CONFIG.beltInner + 3 + Math.random() * (CONFIG.beltOuter - CONFIG.beltInner - 6);
+                const angle = Math.random() * Math.PI * 2;
+                const yOff = (Math.random() - 0.5) * 9;
+                const radius = 0.2 + Math.random() * 0.25;
+
+                const colorType = Math.random();
+                let color;
+                if (colorType < 0.3) color = 0x665544;
+                else if (colorType < 0.55) color = 0x887766;
+                else if (colorType < 0.75) color = 0x776655;
+                else if (colorType < 0.9) color = 0x554433;
+                else color = 0x778899;
+
+                const rock = createAsteroidMesh(radius, color, 0.4 + Math.random() * 0.25);
+                rock.position.set(Math.cos(angle) * r, yOff, Math.sin(angle) * r);
+                rock.userData = {
+                    distance: r,
+                    speed: 0.004 / Math.pow(r / 90, 1.5),
+                    angle: angle,
+                    rotSpeed: 0.025 + Math.random() * 0.05,
+                    rotAxis: new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).normalize(),
+                    yOffset: yOff,
+                };
+                scene.add(rock);
+                rockMeshes.push(rock);
+            }
+
+            // === 小型岩石（3D 网格）===
+            for (let i = 0; i < CONFIG.smallRocksCount; i++) {
+                const r = CONFIG.beltInner + 2 + Math.random() * (CONFIG.beltOuter - CONFIG.beltInner - 4);
+                const angle = Math.random() * Math.PI * 2;
+                const yOff = (Math.random() - 0.5) * 10;
+                const radius = 0.1 + Math.random() * 0.15;
+
+                const colorType = Math.random();
+                let color;
+                if (colorType < 0.25) color = 0x554433;
+                else if (colorType < 0.5) color = 0x776655;
+                else if (colorType < 0.7) color = 0x665544;
+                else if (colorType < 0.85) color = 0x443322;
+                else color = 0x667788;
+
+                const rock = createAsteroidMesh(radius, color, 0.45 + Math.random() * 0.3);
+                rock.position.set(Math.cos(angle) * r, yOff, Math.sin(angle) * r);
+                rock.userData = {
+                    distance: r,
+                    speed: 0.004 / Math.pow(r / 90, 1.5),
+                    angle: angle,
+                    rotSpeed: 0.03 + Math.random() * 0.07,
+                    rotAxis: new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).normalize(),
+                    yOffset: yOff,
+                };
+                scene.add(rock);
+                rockMeshes.push(rock);
+            }
+
+            // === 背景星空 ===
+            bgStarfield = createBgStarfield();
+            scene.add(bgStarfield);
+
+            renderer.domElement.addEventListener('pointerdown', () => { controls.autoRotate = false; });
+            window.addEventListener('resize', onResize);
+
+            loadingEl.style.display = 'none';
+        }
+
+        // ==========================================
+        // 背景星空
+        // ==========================================
+        function createBgStarfield() {
+            const geo = new THREE.BufferGeometry();
+            const positions = [];
+            const colors = [];
+            const count = 5000;
+            for (let i = 0; i < count; i++) {
+                const r = 400 + Math.random() * 800;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                positions.push(
+                    r * Math.sin(phi) * Math.cos(theta),
+                    r * Math.sin(phi) * Math.sin(theta),
+                    r * Math.cos(phi)
+                );
+                const b = 0.35 + Math.random() * 0.5;
+                const t = Math.random();
+                if (t < 0.7) {
+                    colors.push(b, b, b);
+                } else if (t < 0.88) {
+                    colors.push(b, b * 0.85, b * 0.6);
+                } else {
+                    colors.push(b * 0.65, b * 0.75, b);
+                }
+            }
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 1.2, vertexColors: true, transparent: true,
+                opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false
+            }));
+        }
+
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            time += 0.008;
+
+            // 大型小行星公转 + 自转
+            for (const ast of largeAsteroidMeshes) {
+                const ud = ast.userData;
+                ud.angle += ud.speed;
+                ast.position.x = Math.cos(ud.angle) * ud.distance;
+                ast.position.z = Math.sin(ud.angle) * ud.distance;
+                ast.rotateOnAxis(ud.rotAxis, ud.rotSpeed);
+            }
+
+            // 所有 3D 岩石公转 + 自转
+            for (const rock of rockMeshes) {
+                const ud = rock.userData;
+                ud.angle += ud.speed;
+                rock.position.x = Math.cos(ud.angle) * ud.distance;
+                rock.position.z = Math.sin(ud.angle) * ud.distance;
+                rock.rotateOnAxis(ud.rotAxis, ud.rotSpeed);
+            }
+
+            if (bgStarfield) bgStarfield.rotation.y += 0.00008;
+
+            controls.update();
+            composer.render();
+        }
+
+        init();
+        animate();
+    </script>
+</body>
+</html>
