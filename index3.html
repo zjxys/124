@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GJ 504b · 粉色星球</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Microsoft YaHei', '微软雅黑', 'PingFang SC', sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            cursor: grab;
+        }
+        body:active { cursor: grabbing; }
+
+        #canvas-container {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px; left: 20px;
+            z-index: 10;
+            color: rgba(255,255,255,0.8);
+            pointer-events: none;
+            user-select: none;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            text-transform: uppercase;
+            letter-spacing: 6px;
+            color: #ff99cc;
+            text-shadow: 0 0 15px rgba(255,80,180,1), 0 0 40px rgba(200,60,200,0.6), 0 2px 0 rgba(0,0,0,0.8);
+            font-weight: 900;
+        }
+
+        .subtitle {
+            margin-top: 6px;
+            font-size: 0.9rem;
+            color: #ff88bb;
+            letter-spacing: 3px;
+            text-shadow: 0 0 10px rgba(255,100,180,0.8);
+        }
+
+        .instruction {
+            margin-top: 12px;
+            font-size: 0.85rem;
+            background: rgba(30,5,25,0.7);
+            border: 1px solid rgba(255,100,180,0.4);
+            border-radius: 10px;
+            padding: 10px 14px;
+            border-radius: 8px;
+            border-left: 3px solid rgba(255,100,180,0.8);
+            color: rgba(255,200,230,0.75);
+            line-height: 1.8;
+            backdrop-filter: blur(4px);
+        }
+
+        .info {
+            margin-top: 12px;
+            font-size: 0.8rem;
+            background: rgba(30,5,25,0.7);
+            border: 1px solid rgba(255,100,180,0.3);
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: rgba(255,200,230,0.7);
+            line-height: 1.8;
+            backdrop-filter: blur(4px);
+        }
+
+        .info b {
+            color: #ffaadd;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%,-50%);
+            color: rgba(255,200,230,0.9);
+            font-size: 20px;
+            z-index: 20;
+            text-align: center;
+        }
+    </style>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+
+    <div id="loading">正在浮现粉色星云...</div>
+
+    <div id="ui-layer">
+        <h1>GJ 504 b</h1>
+        <div class="subtitle">THE PINK PLANET · 粉色星球</div>
+        <div class="instruction">
+            🖱️ <b>拖拽</b>: 旋转视角<br>
+            🔍 <b>滚轮</b>: 缩放距离
+        </div>
+        <div class="info">
+            <b>类型</b>: 气态巨行星 / 褐矮星<br>
+            <b>距离</b>: 约 57 光年<br>
+            <b>温度</b>: 约 237 °C<br>
+            <b>大气</b>: 富含盐云 (NaCl)
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // ==========================================
+        // 配置
+        // ==========================================
+        const CONFIG = {
+            planetRadius: 38,
+            atmosphereInnerRadius: 44,
+            atmosphereOuterRadius: 180,
+            atmosphereParticleCount: 50000,
+            cloudBandCount: 16000,
+            starCount: 4000,
+        };
+
+        let scene, camera, renderer, composer, controls;
+        let planetSurface, upperAtmosphere, glowAura, atmosphereDisk, cloudBands;
+        let orbitalTrails = [];
+        let starfield;
+        let bloomPass;
+        let time = 0;
+        let diskData = null;
+
+        const loadingEl = document.getElementById('loading');
+
+        // ==========================================
+        // 粒子纹理
+        // ==========================================
+        function createParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+            g.addColorStop(0,   'rgba(255,255,255,1)');
+            g.addColorStop(0.2, 'rgba(255,255,255,0.8)');
+            g.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+            g.addColorStop(1,   'rgba(0,0,0,0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, 32, 32);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // ==========================================
+        // 行星表面纹理 — 樱花粉/洋红色调
+        // ==========================================
+        function createPlanetTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+
+            // 基础渐变 — 粉色洋红行星
+            const grad = ctx.createLinearGradient(0, 0, 0, 256);
+            grad.addColorStop(0,    '#cc4488');
+            grad.addColorStop(0.25, '#dd5599');
+            grad.addColorStop(0.5,  '#ee66aa');
+            grad.addColorStop(0.75, '#dd66aa');
+            grad.addColorStop(1,    '#cc5599');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 512, 256);
+
+            // 添加云带纹理 — 模拟气态行星条纹
+            for (let band = 0; band < 8; band++) {
+                const y = (band / 8) * 256 + Math.random() * 10;
+                const h = 15 + Math.random() * 20;
+                const hue = 310 + Math.random() * 30; // 粉紫色调
+                const sat = 60 + Math.random() * 20;
+                const light = 50 + Math.random() * 15;
+                ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, 0.4)`;
+                ctx.fillRect(0, y, 512, h);
+            }
+
+            // 添加颗粒噪点模拟大气湍流
+            for (let i = 0; i < 10000; i++) {
+                const x = Math.random() * 512;
+                const y = Math.random() * 256;
+                const size = Math.random() * 2 + 0.5;
+                const brightness = Math.random() * 0.3 + 0.2;
+                const hue = 300 + Math.random() * 40;
+                const sat = 70 + Math.random() * 20;
+                const light = 60 + Math.random() * 25;
+                ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${brightness})`;
+                ctx.beginPath();
+                ctx.arc(x, y, size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 添加一些较大的风暴/涡旋结构
+            for (let i = 0; i < 8; i++) {
+                const x = Math.random() * 512;
+                const y = Math.random() * 256;
+                const rx = Math.random() * 50 + 20;
+                const ry = Math.random() * 25 + 10;
+                const alpha = Math.random() * 0.3 + 0.15;
+                const hue = 320 + Math.random() * 20;
+                const spotGrad = ctx.createRadialGradient(x, y, 0, x, y, rx);
+                spotGrad.addColorStop(0, `hsla(${hue}, 70%, 75%, ${alpha})`);
+                spotGrad.addColorStop(0.6, `hsla(${hue+10}, 65%, 60%, ${alpha*0.5})`);
+                spotGrad.addColorStop(1, `hsla(${hue+20}, 60%, 50%, 0)`);
+                ctx.fillStyle = spotGrad;
+                ctx.beginPath();
+                ctx.ellipse(x, y, rx, ry, Math.random() * 0.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // ==========================================
+        // 初始化
+        // ==========================================
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000000, 0.0008);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 5000);
+            camera.position.set(0, 80, 320);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0;
+            container.appendChild(renderer.domElement);
+
+            // 鼠标控制
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.06;
+            controls.rotateSpeed = 0.6;
+            controls.zoomSpeed = 1.2;
+            controls.minDistance = 80;
+            controls.maxDistance = 1500;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.3;
+
+            // 后期处理 — 粉紫色 Bloom
+            const renderPass = new RenderPass(scene, camera);
+            bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                2.5, 0.6, 0.0
+            );
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderPass);
+            composer.addPass(bloomPass);
+
+            const tex = createParticleTexture();
+
+            // 行星光源 — 粉紫色反射光
+            const light = new THREE.PointLight(0xff88cc, 2.5, 2000);
+            scene.add(light);
+            const ambient = new THREE.AmbientLight(0x331122, 0.3);
+            scene.add(ambient);
+
+            // --- 行星表面 ---
+            const planetTex = createPlanetTexture();
+            planetSurface = new THREE.Mesh(
+                new THREE.SphereGeometry(CONFIG.planetRadius, 64, 64),
+                new THREE.MeshBasicMaterial({
+                    map: planetTex,
+                    color: 0xffffff
+                })
+            );
+            scene.add(planetSurface);
+
+            // 高层大气辉光 (BackSide) — 内层洋红光晕
+            upperAtmosphere = new THREE.Mesh(
+                new THREE.SphereGeometry(CONFIG.planetRadius * 1.08, 64, 64),
+                new THREE.MeshBasicMaterial({
+                    color: 0xff55aa,
+                    transparent: true,
+                    opacity: 0.4,
+                    side: THREE.BackSide,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            scene.add(upperAtmosphere);
+
+            // 外层辉光
+            glowAura = new THREE.Mesh(
+                new THREE.SphereGeometry(CONFIG.planetRadius * 1.25, 64, 64),
+                new THREE.MeshBasicMaterial({
+                    color: 0xcc66bb,
+                    transparent: true,
+                    opacity: 0.25,
+                    side: THREE.BackSide,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            scene.add(glowAura);
+
+            // --- 大气粒子盘 (水平方向) ---
+            atmosphereDisk = createAtmosphereDisk(tex);
+            scene.add(atmosphereDisk);
+
+            // --- 云带粒子环 (垂直方向) ---
+            cloudBands = createCloudBandsRing(tex);
+            scene.add(cloudBands);
+
+            // --- 粒子轨道带 ---
+            createOrbitalTrails(tex);
+
+            // --- 星空背景 ---
+            starfield = createStarfield();
+            scene.add(starfield);
+
+            // 用户交互时暂停自动旋转
+            renderer.domElement.addEventListener('pointerdown', () => { controls.autoRotate = false; });
+
+            window.addEventListener('resize', onResize);
+
+            loadingEl.style.display = 'none';
+        }
+
+        // ==========================================
+        // 大气粒子盘 — 水平方向，粉紫色调
+        // ==========================================
+        function createAtmosphereDisk(texture) {
+            const count = CONFIG.atmosphereParticleCount;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+            const innerR = CONFIG.atmosphereInnerRadius;
+            const outerR = CONFIG.atmosphereOuterRadius;
+
+            diskData = {
+                baseAngles: new Float32Array(count),
+                radii:      new Float32Array(count),
+                baseYs:     new Float32Array(count),
+                orbitSpeeds:new Float32Array(count),
+                vertAmps:   new Float32Array(count),
+                vertFreqs:  new Float32Array(count),
+                vertPhases: new Float32Array(count),
+                radialAmps: new Float32Array(count),
+                radialFreqs:new Float32Array(count),
+            };
+
+            for (let i = 0; i < count; i++) {
+                const t = Math.pow(Math.random(), 0.5);
+                const r = innerR + (outerR - innerR) * t;
+                const angle = Math.random() * Math.PI * 2;
+                const thickness = (Math.random() - 0.5) * 3;
+                const baseY = thickness;
+
+                positions[i * 3]     = r * Math.cos(angle);
+                positions[i * 3 + 1] = baseY;
+                positions[i * 3 + 2] = r * Math.sin(angle);
+
+                // 粉紫色调梯度 — 樱花粉到深紫
+                const normR = (r - innerR) / (outerR - innerR);
+                let cr, cg, cb;
+
+                if (normR < 0.15) {
+                    const k = normR / 0.15;
+                    cr = 1.0;
+                    cg = 0.4 + 0.2 * k;
+                    cb = 0.7 + 0.1 * k;
+                } else if (normR < 0.4) {
+                    const k = (normR - 0.15) / 0.25;
+                    cr = 1.0 - 0.1 * k;
+                    cg = 0.6 - 0.15 * k;
+                    cb = 0.8 + 0.1 * k;
+                } else if (normR < 0.7) {
+                    const k = (normR - 0.4) / 0.3;
+                    cr = 0.9 - 0.15 * k;
+                    cg = 0.45 - 0.1 * k;
+                    cb = 0.9 - 0.1 * k;
+                } else {
+                    const k = (normR - 0.7) / 0.3;
+                    cr = 0.75 - 0.2 * k;
+                    cg = 0.35 - 0.1 * k;
+                    cb = 0.8 + 0.1 * k;
+                }
+
+                const dopplerBoost = 1.0 + 0.5 * Math.cos(angle);
+                cr *= dopplerBoost;
+                cg *= dopplerBoost;
+                cb *= dopplerBoost;
+
+                const brightness = 1.8 - normR * 0.9;
+                colors[i * 3]     = cr * brightness;
+                colors[i * 3 + 1] = cg * brightness;
+                colors[i * 3 + 2] = cb * brightness;
+
+                // 动态参数
+                diskData.baseAngles[i]  = angle;
+                diskData.radii[i]       = r;
+                diskData.baseYs[i]      = baseY;
+                diskData.orbitSpeeds[i] = 0.06 * Math.pow(innerR / r, 1.5);
+                diskData.vertAmps[i]    = 1.0 + (r / outerR) * 5;
+                diskData.vertFreqs[i]   = 0.4 + Math.random() * 1.6;
+                diskData.vertPhases[i]  = Math.random() * Math.PI * 2;
+                diskData.radialAmps[i]  = 0.5 + Math.random() * 3.0;
+                diskData.radialFreqs[i] = 0.2 + Math.random() * 0.6;
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 3, map: texture, vertexColors: true, transparent: true,
+                opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false
+            }));
+        }
+
+        // ==========================================
+        // 云带环 — 垂直方向，模拟盐云
+        // ==========================================
+        function createCloudBandsRing(texture) {
+            const count = CONFIG.cloudBandCount;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+            const innerR = CONFIG.atmosphereInnerRadius * 1.1;
+            const outerR = CONFIG.atmosphereOuterRadius * 0.9;
+
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const r = innerR + (outerR - innerR) * Math.pow(Math.random(), 0.8);
+
+                // 垂直方向 — y 和 z 构成环面，x 为厚度
+                positions[i * 3]     = (Math.random() - 0.5) * 2;
+                positions[i * 3 + 1] = r * Math.cos(angle);
+                positions[i * 3 + 2] = r * Math.sin(angle);
+
+                const t = (r - innerR) / (outerR - innerR);
+                const dopplerBoost = 1.0 + 0.5 * Math.cos(angle);
+                // 盐云偏亮粉白色
+                const cr = (0.95 - t * 0.15) * dopplerBoost;
+                const cg = (0.65 - t * 0.2) * dopplerBoost;
+                const cb = (0.85 - t * 0.1) * dopplerBoost;
+                const brightness = 1.5 - t * 0.7;
+
+                colors[i * 3]     = cr * brightness;
+                colors[i * 3 + 1] = cg * brightness;
+                colors[i * 3 + 2] = cb * brightness;
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 3, map: texture, vertexColors: true, transparent: true,
+                opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false
+            }));
+        }
+
+        // ==========================================
+        // 粒子轨道带 — 椭圆轨道 + 引导线
+        // ==========================================
+        function createOrbitalTrails(texture) {
+            const trailConfigs = [
+                { count: 4000, baseR: 210, spread: 18, speed: 1.2,  inclination: 0.08,  eccentricity: 0.35, argPeri: 0.0,  color: 0xdd88bb, size: 2.0, opacity: 0.7 },
+                { count: 5500, baseR: 340, spread: 25, speed: 0.6,  inclination: -0.15, eccentricity: 0.50, argPeri: 0.9,  color: 0xcc77aa, size: 2.0, opacity: 0.7 },
+                { count: 4500, baseR: 400, spread: 20, speed: 0.45, inclination: 0.06,  eccentricity: 0.28, argPeri: 1.8,  color: 0xbb6699, size: 2.0, opacity: 0.65 },
+                { count: 6500, baseR: 560, spread: 30, speed: 0.22, inclination: -0.25, eccentricity: 0.55, argPeri: 2.6,  color: 0xaa5588, size: 2.5, opacity: 0.7 },
+                { count: 5000, baseR: 780, spread: 38, speed: 0.11, inclination: 0.45,  eccentricity: 0.60, argPeri: 3.4,  color: 0x994477, size: 3.0, opacity: 0.6 },
+                { count: 3500, baseR: 980, spread: 60, speed: 0.05, inclination: -0.55, eccentricity: 0.65, argPeri: 4.5,  color: 0x883366, size: 3.0, opacity: 0.5 },
+            ];
+
+            trailConfigs.forEach(config => {
+                const geo = new THREE.BufferGeometry();
+                const positions = new Float32Array(config.count * 3);
+                const colors = new Float32Array(config.count * 3);
+                const params = [];
+                const baseColor = new THREE.Color(config.color);
+
+                for (let i = 0; i < config.count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const r = config.baseR + (Math.random() - 0.5) * config.spread * 2;
+                    const inc = config.inclination + (Math.random() - 0.5) * 0.06;
+                    const e = Math.max(0.05, Math.min(0.85, config.eccentricity + (Math.random() - 0.5) * 0.06));
+                    const argPeri = config.argPeri + (Math.random() - 0.5) * 0.15;
+                    const yOff = (Math.random() - 0.5) * 4;
+                    const spd = config.speed * (0.85 + Math.random() * 0.3);
+
+                    const a = r;
+                    const b = r * Math.sqrt(1 - e * e);
+                    const cOff = r * e;
+                    const cosArg = Math.cos(argPeri);
+                    const sinArg = Math.sin(argPeri);
+
+                    params.push({ angle, a, b, cOff, cosArg, sinArg, inc, yOff, speed: spd });
+
+                    const u = a * Math.cos(angle) - cOff;
+                    const v = b * Math.sin(angle);
+                    const uR = u * cosArg - v * sinArg;
+                    const vR = u * sinArg + v * cosArg;
+
+                    positions[i * 3]     = uR;
+                    positions[i * 3 + 1] = vR * Math.sin(inc) + yOff;
+                    positions[i * 3 + 2] = vR * Math.cos(inc);
+
+                    const c = baseColor.clone();
+                    c.multiplyScalar(0.6 + Math.random() * 0.4);
+                    colors[i * 3]     = c.r;
+                    colors[i * 3 + 1] = c.g;
+                    colors[i * 3 + 2] = c.b;
+                }
+
+                geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+                const mat = new THREE.PointsMaterial({
+                    size: config.size, map: texture, vertexColors: true,
+                    transparent: true, opacity: config.opacity,
+                    blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true
+                });
+
+                const points = new THREE.Points(geo, mat);
+                scene.add(points);
+
+                // 椭圆轨道引导线
+                const orbitGeo = new THREE.BufferGeometry();
+                const orbitPts = [];
+                const segs = 300;
+                const eCfg = config.eccentricity;
+                const aCfg = config.baseR;
+                const bCfg = aCfg * Math.sqrt(1 - eCfg * eCfg);
+                const cCfg = aCfg * eCfg;
+                const cosArgCfg = Math.cos(config.argPeri);
+                const sinArgCfg = Math.sin(config.argPeri);
+                for (let i = 0; i <= segs; i++) {
+                    const a = (i / segs) * Math.PI * 2;
+                    const u = aCfg * Math.cos(a) - cCfg;
+                    const v = bCfg * Math.sin(a);
+                    const uR = u * cosArgCfg - v * sinArgCfg;
+                    const vR = u * sinArgCfg + v * cosArgCfg;
+                    orbitPts.push(uR, vR * Math.sin(config.inclination), vR * Math.cos(config.inclination));
+                }
+                orbitGeo.setAttribute('position', new THREE.Float32BufferAttribute(orbitPts, 3));
+                const orbitLine = new THREE.Line(orbitGeo, new THREE.LineBasicMaterial({
+                    color: config.color, transparent: true, opacity: 0.15
+                }));
+                scene.add(orbitLine);
+
+                orbitalTrails.push({ mesh: points, params, positions, orbitLine });
+            });
+        }
+
+        function updateOrbitalTrails() {
+            orbitalTrails.forEach(trail => {
+                const pos = trail.positions;
+                const params = trail.params;
+                for (let i = 0; i < params.length; i++) {
+                    const p = params[i];
+                    p.angle += p.speed * 0.002;
+                    const u = p.a * Math.cos(p.angle) - p.cOff;
+                    const v = p.b * Math.sin(p.angle);
+                    const uR = u * p.cosArg - v * p.sinArg;
+                    const vR = u * p.sinArg + v * p.cosArg;
+                    pos[i * 3]     = uR;
+                    pos[i * 3 + 1] = vR * Math.sin(p.inc) + p.yOff;
+                    pos[i * 3 + 2] = vR * Math.cos(p.inc);
+                }
+                trail.mesh.geometry.attributes.position.needsUpdate = true;
+            });
+        }
+
+        // ==========================================
+        // 星空背景
+        // ==========================================
+        function createStarfield() {
+            const geo = new THREE.BufferGeometry();
+            const positions = [];
+            const count = CONFIG.starCount;
+            for (let i = 0; i < count; i++) {
+                const r = 800 + Math.random() * 1500;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                positions.push(
+                    r * Math.sin(phi) * Math.cos(theta),
+                    r * Math.sin(phi) * Math.sin(theta),
+                    r * Math.cos(phi)
+                );
+            }
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            return new THREE.Points(geo, new THREE.PointsMaterial({
+                color: 0xffffff, size: 1.5, transparent: true,
+                opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false
+            }));
+        }
+
+        // ==========================================
+        // 窗口适配
+        // ==========================================
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // ==========================================
+        // 动画循环
+        // ==========================================
+        function animate() {
+            requestAnimationFrame(animate);
+            time += 0.005;
+
+            // 行星自转
+            if (planetSurface) {
+                planetSurface.rotation.y += 0.001;
+            }
+
+            // 大气粒子盘 — 逐粒子动态更新
+            if (atmosphereDisk && diskData) {
+                const posAttr = atmosphereDisk.geometry.attributes.position;
+                const arr = posAttr.array;
+                const n = diskData.baseAngles.length;
+                for (let i = 0; i < n; i++) {
+                    const idx = i * 3;
+                    const ang = diskData.baseAngles[i] + time * diskData.orbitSpeeds[i];
+                    const r   = diskData.radii[i] + Math.sin(time * diskData.radialFreqs[i] + diskData.vertPhases[i]) * diskData.radialAmps[i];
+                    const y   = diskData.baseYs[i] + Math.sin(time * diskData.vertFreqs[i] + diskData.vertPhases[i]) * diskData.vertAmps[i];
+                    arr[idx]     = Math.cos(ang) * r;
+                    arr[idx + 1] = y;
+                    arr[idx + 2] = Math.sin(ang) * r;
+                }
+                posAttr.needsUpdate = true;
+                atmosphereDisk.material.opacity = 0.85 + 0.1 * Math.sin(time * 3);
+            }
+
+            // 云带环旋转
+            if (cloudBands) cloudBands.rotation.z += 0.0008;
+
+            // 粒子轨道带运动
+            updateOrbitalTrails();
+
+            // 星空缓慢旋转
+            if (starfield) starfield.rotation.y += 0.0002;
+
+            // 高层大气脉动
+            if (upperAtmosphere) {
+                const pulse = 1 + Math.sin(time * 2) * 0.02;
+                upperAtmosphere.scale.set(pulse, pulse, pulse);
+            }
+
+            // 外层辉光呼吸
+            if (glowAura) {
+                const pulse = 1 + Math.sin(time * 1.5) * 0.03;
+                glowAura.scale.set(pulse, pulse, pulse);
+                glowAura.material.opacity = 0.22 + Math.sin(time * 2) * 0.05;
+            }
+
+            controls.update();
+            composer.render();
+        }
+
+        // ==========================================
+        // 启动
+        // ==========================================
+        init();
+        animate();
+
+    </script>
+</body>
+</html>
