@@ -383,38 +383,49 @@
             50%      { box-shadow: 0 0 18px rgba(255, 130, 0, 0.8); }
         }
 
-        /* 小屏：目录改为抽屉列表 */
-        #planet-nav.drawer { right: 14px; top: auto; bottom: 96px; transform: none; }
-        #planet-nav.drawer #planet-nav-toggle { width: 54px; height: 54px; font-size: 10px; }
+        /* 星球目录：右侧滚轮列表 */
+        #planet-nav.drawer { right: 18px; top: auto; bottom: 96px; transform: none; }
+        #planet-nav.drawer #planet-nav-toggle { width: 60px; height: 60px; font-size: 11px; }
         #planet-nav.drawer #planet-nav-items {
             position: fixed;
-            right: 12px;
-            bottom: 162px;
+            right: 14px;
+            bottom: 172px;
             top: auto;
-            width: min(330px, calc(100vw - 24px));
-            max-height: 56vh;
+            width: min(366px, calc(100vw - 28px));
+            height: auto;
+            max-height: 64vh;
             overflow-y: auto;
-            padding: 4px;
+            overscroll-behavior: contain;
+            padding: 6px;
             pointer-events: none;
             display: flex;
             flex-direction: column;
-            gap: 5px;
+            gap: 7px;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(130, 80, 255, 0.55) transparent;
         }
-        #planet-nav.drawer #planet-nav-items::-webkit-scrollbar { width: 4px; }
-        #planet-nav.drawer #planet-nav-items::-webkit-scrollbar-thumb { background: rgba(130, 80, 255, 0.5); border-radius: 2px; }
+        #planet-nav.drawer.open #planet-nav-items { pointer-events: auto; }
+        #planet-nav.drawer #planet-nav-items::-webkit-scrollbar { width: 5px; }
+        #planet-nav.drawer #planet-nav-items::-webkit-scrollbar-thumb { background: rgba(130, 80, 255, 0.55); border-radius: 3px; }
+        #planet-nav.drawer #planet-nav-items::-webkit-scrollbar-track { background: transparent; }
         #planet-nav.drawer .nav-item {
             position: relative;
             left: auto; top: auto;
             width: 100%;
             height: auto;
-            min-height: 44px;
+            min-height: 62px;
+            flex: 0 0 auto;
             margin: 0;
+            padding: 9px 16px;
             opacity: 0;
             transform: none;
             display: none;
         }
         #planet-nav.drawer.open .nav-item.show { display: flex; opacity: 1; pointer-events: auto; }
-        #planet-nav.drawer .nav-item.nav-item--bh { min-height: 54px; }
+        #planet-nav.drawer .nav-item.nav-item--bh { min-height: 74px; }
+        #planet-nav.drawer .nav-title { font-size: 16.5px; letter-spacing: 0.8px; }
+        #planet-nav.drawer .nav-desc { font-size: 11.5px; margin-top: 3px; }
+        #planet-nav.drawer .nav-evolve-btn { margin-top: 5px; padding: 4px 8px; font-size: 11px; }
 
         /* ===== 星球信息面板 ===== */
         #info-panel {
@@ -2130,21 +2141,10 @@
 
         function layoutNav() {
             const nav = document.getElementById('planet-nav');
-            const drawer = window.innerWidth < 900;
-            nav.classList.toggle('drawer', drawer);
-            if (drawer) return;
-
-            const n = navItems.length;
-            const span = 132 * Math.PI / 180;
-            const maxByHeight = (window.innerHeight * 0.42) / Math.sin(span / 2);
-            const radius = Math.max(240, Math.min(520, n * 24, maxByHeight));
-            const step = n > 1 ? span / (n - 1) : 0;
-
-            navItems.forEach((el, i) => {
-                const a = -span / 2 + step * i;
-                el.style.setProperty('--tx', (-Math.cos(a) * radius).toFixed(1) + 'px');
-                el.style.setProperty('--ty', (Math.sin(a) * radius).toFixed(1) + 'px');
-                el.style.transitionDelay = (i * 18) + 'ms';
+            nav.classList.add('drawer');
+            navItems.forEach(el => {
+                el.style.removeProperty('--tx');
+                el.style.removeProperty('--ty');
             });
         }
 
